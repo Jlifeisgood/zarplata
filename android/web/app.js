@@ -320,7 +320,7 @@ function openEmp(id) {
     '<div class="f"><span>Как вводите сумму</span>' + seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки (обратный расчёт)"]]) + '</div>' +
     '<label class="f"><span id="amt-l">' + (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + ' *</span><input class="in amt" id="f-amt" inputmode="numeric" value="' + (v.amount ? fmt(v.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
-    '<div class="two"><label class="f"><span>Работает с</span><input class="in" type="month" id="f-from" value="' + esc(v.from) + '"></label>' +
+    '<div class="two"><label class="f"><span>Дата принятия *</span><input class="in" type="date" id="f-hire" value="' + esc(v.hire || (e ? v.from + "-01" : (ui.ym === curYm() ? new Date().toLocaleDateString("sv") : ui.ym + "-01"))) + '"></label>' +
     '<label class="f"><span>Последний месяц</span><input class="in" type="month" id="f-to" value="' + esc(v.to || "") + '"></label></div>' +
     (e ? '<div class="hint">«Последний месяц» заполняйте при увольнении — дальше начисления не будет.</div>' : "") +
     '<details class="more"><summary>Для отчёта в налоговую</summary><div class="f"><span>Статус</span>' + seg("res", D.res, [["1", "Резидент"], ["2", "Нерезидент"]]) + '</div>' +
@@ -331,7 +331,7 @@ function openEmp(id) {
         .map(o => '<option value="' + o[0] + '"' + (String(v.seat || 1) === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") + '</select></label>' +
     '<label class="f"><span>Дата создания рабочего места</span><input class="in" type="date" id="f-wp" value="' + esc(v.wp || "") + '"></label>' +
     '<div class="hint" style="margin-top:-6px">Если создано до 2025 года, в файле будет 01.01.2025 (так требует шаблон). Пусто — первое число месяца приёма.</div>' +
-    '<label class="f"><span>Номер льготы из кабинета (если есть льгота ст. 380)</span><input class="in" id="f-benid" value="' + esc(v.benId || "") + '" autocomplete="off"></label></details>' +
+    '<label class="f"><span>Номер льготы (ID) из кабинета — если есть льгота ст. 380</span><input class="in" id="f-benid" value="' + esc(v.benId || "") + '" placeholder="по умолчанию ' + esc(S.rules.benId || "—") + '" autocomplete="off"></label></details>' +
     '<div class="stack"><button class="btn" data-act="saveEmp">Сохранить</button>' +
     (e ? '<button class="btn bad" data-act="delEmp">Удалить сотрудника</button>' : "") + '</div>');
   updPreview();
@@ -342,10 +342,13 @@ function saveEmp() {
   let bad = false;
   [["f-last", !last], ["f-first", !first], ["f-amt", !(amt > 0)], ["f-pinfl", pinfl && pinfl.length !== 14]].forEach(([id, b]) => { $("#" + id).classList.toggle("bad", !!b); bad = bad || !!b; });
   if (bad) { toast(pinfl && pinfl.length !== 14 ? "ПИНФЛ — ровно 14 цифр" : "Заполните отмеченные поля"); return; }
-  const from = g("f-from") || ui.ym, to = g("f-to");
+  const hire = g("f-hire"), to = g("f-to");
+  $("#f-hire").classList.toggle("bad", !hire);
+  if (!hire) { toast("Укажите дату принятия"); return; }
+  const from = hire.slice(0, 7);
   if (to && to < from) { toast("Последний месяц раньше начала работы"); return; }
   const rate = Number(g("f-rate").replace(",", ".")) || 1;
-  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, to: to || "", res: D.res, rate,
+  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to: to || "", res: D.res, rate,
     ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp: $("#f-wp").value };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
@@ -471,18 +474,19 @@ function exportSoliq() {
   const wb = XLSX.read(window.TPL_11101_20, { type: "base64", cellStyles: true });
   const ws = wb.Sheets.list01;
   // дата создания рабочего места: введённая вручную, иначе 01.01.2025 (принят до 2025) или первое число месяца приёма
-  const created = e => e.wp && e.wp >= "2025-01-01" ? e.wp.split("-").reverse().join(".") : (e.wp || e.from < "2025-01") ? "01.01.2025" : "01." + e.from.slice(5) + "." + e.from.slice(0, 4);
+  // дата создания рабочего места: введённая вручную, иначе дата принятия; всё, что раньше 2025 года, — 01.01.2025 (требование шаблона)
+  const created = e => { const d = e.wp || e.hire || e.from + "-01"; return d >= "2025-01-01" ? d.split("-").reverse().join(".") : "01.01.2025"; };
   const rows = cum.rows.map((x, i) => {
     const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph", ben = !gph && x.exempt > 0;
     return [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
       gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross, m.gross, x.pit, m.pit,
-      ben ? (e.benId || null) : null, ben ? x.exempt : null, ben ? m.exempt : null];
+      ben ? (e.benId || S.rules.benId || null) : null, ben ? x.exempt : null, ben ? m.exempt : null];
   });
   XLSX.utils.sheet_add_aoa(ws, rows, { origin: "B15" });
   const tot = (k) => cum.rows.reduce((s, x) => s + x[k], 0), totM = (k) => [...mon.values()].reduce((s, x) => s + x[k], 0);
   [["L12", tot("gross")], ["M12", totM("gross")], ["N12", tot("pit")], ["O12", totM("pit")], ["Q12", tot("exempt")], ["R12", totM("exempt")]].forEach(([a, v]) => { if (ws[a]) ws[a].v = v; });
   const noPin = cum.rows.filter(x => !x.e.pinfl).length;
-  const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId).length;
+  const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId && !S.rules.benId).length;
   if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (графа 15)"), 4200);
   sendFile("Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     XLSX.write(wb, { type: "base64", bookType: "xlsx" }));
@@ -521,7 +525,8 @@ function openRates() {
     '<div class="note" style="margin:0 0 14px">Проект нового Налогового кодекса (ЕСП → «социальный налог», отмена 25% для бюджетных, новые сроки) пока не вступил в силу — в расчёте не учтён.</div>' +
     '<div class="two">' + f("r-pit", "НДФЛ, %", R.pit) + f("r-inps", "ИНПС, %", R.inps) + '</div><div class="two">' + f("r-esp", "ЕСП, %", R.esp) + f("r-espb", "ЕСП бюджет, %", R.espBudget) + '</div>' +
     '<div class="sec" style="margin-top:4px">Резидент IT Park (трудовые договоры)</div><div class="two">' + f("r-pitit", "НДФЛ, %", R.pitIt) + f("r-espit", "ЕСП, %", R.espIt) + '</div>' +
-    f("r-mrot", "МРОТ, сум (для подсказки)", R.mrot) +
+    f("r-mrot", "МРОТ, сум (для подсказки и льготы ст. 380)", R.mrot) +
+    '<label class="f"><span>ID льготы НДФЛ по умолчанию (ст. 380, для файла в кабинет)</span><input class="in" id="r-benid" value="' + esc(R.benId || "") + '"></label>' +
     sw("swd", "inside", D.inside, "ИНПС входит в НДФЛ", "На руки = начислено − НДФЛ. Выключите, если ИНПС удерживается сверху НДФЛ") +
     sw("swd", "gph", D.gph, "Удерживать ИНПС с ГПХ", "По ПП-4086 (п. 5) — 0,1% от всех доходов, облагаемых НДФЛ, в том числе по ГПХ") +
     '<div class="stack"><button class="btn" data-act="saveRates">Сохранить</button><button class="btn ghost" data-act="resetRates">Вернуть стандартные</button></div>');
@@ -531,7 +536,7 @@ function saveRates() {
   const v = { pit: n("r-pit"), inps: n("r-inps"), esp: n("r-esp"), espBudget: n("r-espb"), pitIt: n("r-pitit"), espIt: n("r-espit"), mrot: n("r-mrot") };
   if (Object.values(v).some(x => !isFinite(x) || x < 0) || v.pit >= 100 || v.pitIt >= 100) { toast("Проверьте числа"); return; }
   freezePast();
-  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph });
+  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim() });
   save(); closeSheet(); render(); toast("Ставки сохранены");
 }
 
