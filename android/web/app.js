@@ -20,6 +20,9 @@ const fullName = e => [e.last, e.first, e.mid].filter(Boolean).join(" ");
 const shortName = e => e.last + " " + (e.first ? e.first[0] + "." : "") + (e.mid ? e.mid[0] + "." : "");
 const initials = e => ((e.last || "?")[0] + (e.first || "")[0]).toUpperCase();
 const parseAmt = v => Number(String(v || "").replace(/\D/g, "")) || 0;
+const RULES_YEAR = 2026; // год, по правилам которого считает приложение (проект нового НК пока не действует)
+const yearNote = ym => Number(ym.slice(0, 4)) > RULES_YEAR
+  ? '<div class="alert warn">Правила на ' + ym.slice(0, 4) + ' год ещё не утверждены — расчёт идёт по правилам ' + RULES_YEAR + ' года.</div>' : "";
 const ICON = {
   left: '<svg viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></svg>',
   right: '<svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>',
@@ -185,6 +188,7 @@ function viewPay() {
   let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + esc(S.company.name || "Мои сотрудники") + '</div></div><div class="page">';
   h += '<div class="month"><button class="ib" data-act="ym" data-d="-1" aria-label="Предыдущий месяц">' + ICON.left + '</button><div class="m">' + ymLabel(ym) +
     (ym === curYm() ? "<small>текущий месяц</small>" : "") + '</div><button class="ib" data-act="ym" data-d="1" aria-label="Следующий месяц">' + ICON.right + '</button></div>';
+  h += yearNote(ym);
   if (!S.emps.length) {
     return h + empty(ICON.team, "Пока никого нет", "Добавьте сотрудника — укажите ФИО и начисление, остальное посчитается само.",
       '<button class="btn" data-act="newEmp">' + ICON.plus + 'Добавить сотрудника</button>') + "</div>";
@@ -402,6 +406,7 @@ function viewRep() {
   h += '<div class="chips">' + [["reg", "Ведомость"], ["tax", "НДФЛ и взносы"], ["sum", "Свод"]].map(k => '<button class="chip ' + (ui.kind === k[0] ? "on" : "") + '" data-act="kind" data-v="' + k[0] + '">' + k[1] + '</button>').join("") + '</div>';
   h += seg("per", ui.per, [["month", "Месяц"], ["quarter", "Квартал"], ["year", "Год"]], "per");
   h += '<div class="month"><button class="ib" data-act="repNav" data-d="-1">' + ICON.left + '</button><div class="m">' + repLabel() + '</div><button class="ib" data-act="repNav" data-d="1">' + ICON.right + '</button></div>';
+  h += yearNote(ui.repYm);
   if (!agg.rows.length) return h + empty(ICON.file, "Нет данных за период", "Добавьте сотрудников и начисления — отчёт соберётся сам.", "") + "</div>";
   const noPin = agg.rows.filter(x => !x.e.pinfl).length;
   if (ui.kind === "tax" && noPin) h += '<div class="alert warn">У ' + noPin + ' сотр. не указан ПИНФЛ — без него отчёт по НДФЛ не подать. Добавьте в разделе «Сотрудники».</div>';
@@ -446,7 +451,7 @@ function viewSet() {
     '<label class="f"><span>ИНН</span><input class="in" id="c-inn" inputmode="numeric" maxlength="9" value="' + esc(S.company.inn) + '"></label>' +
     sw("swc", "split", S.company.split, "Есть производство", "Делить сотрудников и отчёты на АУП и производство") +
     sw("swr", "budget", R.budget, "Бюджетная организация", "ЕСП по повышенной ставке " + pct(R.espBudget));
-  h += '<div class="sec">Ставки</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.budget ? R.espBudget : R.esp) + '</div>' +
+  h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.budget ? R.espBudget : R.esp) + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
   h += '<div class="sec">Оформление</div>' + seg("theme", S.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
@@ -458,7 +463,8 @@ function openRates() {
   const R = S.rules;
   D = { kind: "rates", inside: R.inpsInsidePit, gph: R.inpsGph };
   const f = (id, label, v, extra) => '<label class="f"><span>' + label + '</span><input class="in" id="' + id + '" inputmode="decimal" value="' + String(v).replace(".", ",") + '"></label>';
-  openSheet('<h2>Ставки и правила</h2><p class="sub">Поменялся закон — поправьте здесь. Действует с текущего месяца, прошлые месяцы не пересчитываются.</p>' +
+  openSheet('<h2>Правила ' + RULES_YEAR + ' года</h2><p class="sub">Поменялся закон — поправьте здесь. Действует с текущего месяца, прошлые месяцы не пересчитываются.</p>' +
+    '<div class="note" style="margin:0 0 14px">Проект нового Налогового кодекса (ЕСП → «социальный налог», отмена 25% для бюджетных, новые сроки) пока не вступил в силу — в расчёте не учтён.</div>' +
     '<div class="two">' + f("r-pit", "НДФЛ, %", R.pit) + f("r-inps", "ИНПС, %", R.inps) + '</div><div class="two">' + f("r-esp", "ЕСП, %", R.esp) + f("r-espb", "ЕСП бюджет, %", R.espBudget) + '</div>' +
     f("r-mrot", "МРОТ, сум (для подсказки)", R.mrot) +
     sw("swd", "inside", D.inside, "ИНПС входит в НДФЛ", "На руки = начислено − НДФЛ. Выключите, если ИНПС удерживается сверху НДФЛ") +
