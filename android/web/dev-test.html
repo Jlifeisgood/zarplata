@@ -1,0 +1,25 @@
+<!doctype html><meta charset="utf-8"><title>calc tests</title>
+<pre id="o">running…</pre>
+<script src="calc.js"></script>
+<script>
+const { calc, DEFAULT_RULES } = window.Calc;
+const out = []; let fails = 0;
+function eq(a, b, m) { const ok = JSON.stringify(a) === JSON.stringify(b); if (!ok) { fails++; out.push("FAIL " + m + " got " + JSON.stringify(a) + " want " + JSON.stringify(b)); } }
+const R = DEFAULT_RULES;
+eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, pit: 600000, inps: 5000, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
+const o = calc({ amount: 5000000, mode: "gross", type: "trud" }, { ...R, inpsInsidePit: false });
+eq([o.net, o.pitBudget], [4395000, 600000], "outside");
+const g = calc({ amount: 1000000, mode: "gross", type: "gph" }, R);
+eq([g.inps, g.pitBudget, g.net], [0, 120000, 880000], "gph");
+let cnt = 0;
+for (const inside of [true, false]) for (const type of ["trud", "gph"]) for (let net = 0; net < 20000000; net += 12345) {
+  const Rr = { ...R, inpsInsidePit: inside, inpsGph: !inside }, r = calc({ amount: net, mode: "net", type }, Rr); cnt++;
+  if (r.net !== net) { eq(r.net, net, "net " + net + inside + type); break; }
+  if (r.gross > 0 && calc({ amount: r.gross - 1, mode: "gross", type }, Rr).net >= net) { eq(0, 1, "minimal gross " + net); break; }
+}
+eq(calc({ amount: 1000000, mode: "gross", type: "trud" }, { ...R, budget: true }).esp, 250000, "budget");
+eq(calc({ amount: "abc", mode: "net", type: "trud" }).gross, 0, "garbage");
+eq(calc({ amount: -5, mode: "gross", type: "trud" }).net, 0, "negative");
+document.getElementById("o").textContent = (fails ? out.join("\n") : "ALL OK (" + cnt + " reverse cases)");
+document.title = fails ? "FAIL" : "PASS";
+</script>
