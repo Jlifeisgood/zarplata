@@ -127,7 +127,7 @@ function breakdown(r, rules, o) {
   h += '</div><div class="calc">';
   if (r.inps > 0 && inside) h += '<div class="l"><span>ИНПС ' + pct(rules.inps) + ' (из НДФЛ)</span><span class="num">' + fmt(r.inps) + '</span></div>';
   h += '<div class="l"><span>НДФЛ в бюджет</span><span class="num">' + fmt(r.pitBudget) + '</span></div>';
-  h += '<div class="l"><span>ЕСП ' + pct(espR) + ' (за счёт работодателя)</span><span class="num">' + fmt(r.esp) + '</span></div>';
+  h += '<div class="l"><span>Соцналог (ЕСП) ' + pct(espR) + ', за счёт работодателя</span><span class="num">' + fmt(r.esp) + '</span></div>';
   h += '<div class="l t"><span>Расход компании</span><span class="num">' + fmt(r.cost) + '</span></div>';
   h += '</div>';
   return h;
@@ -415,7 +415,7 @@ function viewRep() {
   const t = agg.tot;
   h += '<div class="sec">К перечислению за период</div><div class="pay"><div>НДФЛ в бюджет<b class="num">' + fmt(t.pitBudget) + '</b></div><div>ИНПС<b class="num">' + fmt(t.inps) + '</b></div><div>ЕСП<b class="num">' + fmt(t.esp) + '</b></div></div>';
   h += '<div class="btns"><button class="btn" data-act="xlsx">' + ICON.file + 'Excel</button><button class="btn sec2" data-act="repText">' + ICON.share + 'Текстом</button></div>';
-  h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры для сверки; отчётность подаётся и корректируется в личном кабинете my.soliq.uz (по данным открытых источников — ежемесячно, до 15 числа). Ставки проверьте в «Настройки → Правила».</div>';
+  h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры для сверки; отчётность подаётся и корректируется в личном кабинете my.soliq.uz (по НК: ежемесячно, до 15 числа следующего месяца; итог за год — до 15 февраля). Ставки проверьте в «Настройки → Правила».</div>';
   return h + "</div>";
 }
 function repTitle() { return (S.company.name ? S.company.name + " — " : "") + repLabel(); }
