@@ -505,7 +505,7 @@ function viewTeam() {
 function openEmp(id) {
   const e = id ? S.emps.find(x => x.id === id) : null;
   D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, res: e.res || "1", ck: e.ck || "1", wd: String(e.wd || 5), touchedMode: true }
-        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", ck: "1", wd: "5", touchedMode: false };
+        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", ck: "1", wd: String(S.company.wd || 5), touchedMode: false };
   const v = e || { last: "", first: "", mid: "", pinfl: "", pos: "", amount: 0, from: ui.ym, to: "" };
   openSheet('<h2>' + (e ? "Сотрудник" : "Новый сотрудник") + '</h2><p class="sub">' + (e ? "Изменения суммы действуют с текущего месяца, прошлые месяцы не пересчитываются." : "Заполните основное — остальное можно добавить позже.") + '</p>' +
     '<label class="f"><span>Фамилия *</span><input class="in" id="f-last" value="' + esc(v.last) + '" autocomplete="off"></label>' +
@@ -515,6 +515,8 @@ function openEmp(id) {
     '<label class="f"><span>Должность</span><input class="in" id="f-pos" value="' + esc(v.pos) + '" autocomplete="off"></label>' +
     (S.company.split ? '<div class="f"><span>Отдел</span>' + seg("dept", D.dept, [["aup", "АУП"], ["prod", "Производство"]]) + '</div>' : "") +
     '<div class="f"><span>Договор</span>' + seg("type", D.type, [["trud", "Трудовой"], ["gph", "ГПХ"]]) + '</div>' +
+    '<div class="f"><span>График работы</span>' + seg("wd", D.wd, [["5", "5-дневка"], ["6", "6-дневка"]]) + '</div>' +
+    '<div class="hint">Нужен для неполного месяца, отпуска и больничного: считаются только рабочие дни по графику (5 — пн–пт, 6 — пн–сб).</div>' +
     '<label class="f"><span>Льгота по доходу (ст. 380 НК)</span><select class="in" id="f-ben">' +
       [["", "Нет"], ["1.41", "1,41 МРОТ — ветераны, инвалиды войны, одинокие матери и др."], ["3", "3 МРОТ — инвалиды с детства, I–II группы"]]
         .map(o => '<option value="' + o[0] + '"' + ((v.ben || "") === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") + '</select></label>' +
@@ -526,7 +528,6 @@ function openEmp(id) {
     dateField("f-to", v.fire || (v.to ? v.to + "-" + pad(new Date(+v.to.slice(0, 4), +v.to.slice(5), 0).getDate()) : ""), "Дата увольнения") + '</div>' +
     (e ? '<div class="hint">Дату увольнения заполняйте, когда сотрудник уходит — начисления будут по месяц увольнения включительно.</div>' : "") +
     '<details class="more"><summary>Для отчёта в налоговую</summary><div class="f"><span>Статус</span>' + seg("res", D.res, [["1", "Резидент"], ["2", "Нерезидент"]]) + '</div>' +
-    '<div class="f"><span>График работы (для неполного месяца, отпуска, больничного)</span>' + seg("wd", D.wd, [["5", "5-дневная неделя"], ["6", "6-дневная неделя"]]) + '</div>' +
     '<div class="f"><span>Форма контракта (для трудовых)</span>' + seg("ck", D.ck, [["1", "Основной"], ["2", "Совместитель"], ["5", "Надомник"]]) + '</div>' +
     '<label class="f"><span>Рабочее время, ставок (1; 0,5; 0,25…)</span><input class="in" id="f-rate" inputmode="decimal" value="' + String(v.rate || 1).replace(".", ",") + '"></label>' +
     '<label class="f"><span>Рабочее место</span><select class="in" id="f-seat">' +
@@ -712,6 +713,8 @@ function viewSet() {
   h += '<label class="f"><span>Название</span><input class="in" id="c-name" value="' + esc(S.company.name) + '" autocomplete="off"></label>' +
     '<label class="f"><span>ИНН</span><input class="in" id="c-inn" inputmode="numeric" maxlength="9" value="' + esc(S.company.inn) + '"></label>' +
     sw("swc", "split", S.company.split, "Есть производство", "Делить сотрудников и отчёты на АУП и производство") +
+    '<div class="f"><span>График работы в компании</span>' + seg("cwd", String(S.company.wd || 5), [["5", "5-дневка"], ["6", "6-дневка"]], "cwd") + '</div>' +
+    '<div class="hint" style="margin-top:-6px">Для новых сотрудников; у каждого сотрудника график можно поменять в его карточке.</div>' +
     sw("swr", "budget", R.budget, "Бюджетная организация", "ЕСП по повышенной ставке " + pct(R.espBudget)) +
     sw("swr", "itpark", R.itpark, "Резидент IT Park", "Трудовые договоры: НДФЛ " + pct(R.pitIt) + ", ЕСП " + pct(R.espIt) + ". ГПХ — по обычным ставкам. Действует до 01.01.2028 (УП-5099, п. 5 и 8)") +
     (R.itpark ? '<div class="two">' + dateField("c-itfrom", R.itFrom, "Включён в реестр IT Park") + dateField("c-itto", R.itTo, "Статус до (если утрачен)") + '</div>' +
@@ -931,6 +934,11 @@ const ACT = {
   rates: openRates, saveRates,
   resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark, f = S.rules.itFrom, t = S.rules.itTo; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it, itFrom: f, itTo: t }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
   backup, restore: () => $("#restore-file").click(),
+  cwd: t => {
+    S.company.wd = Number(t.dataset.v) === 6 ? 6 : 5;
+    if (S.emps.length && confirmBox("Применить график " + S.company.wd + "-дневной недели ко всем сотрудникам?")) S.emps.forEach(e => { e.wd = S.company.wd; });
+    save(); render();
+  },
   rem: () => {
     const on = !remOn(); ui.rem = on;
     if (A && A.setReminders) A.setReminders(on); else { try { localStorage.setItem("zarplata.rem", on ? "1" : "0"); } catch (e) { } }
