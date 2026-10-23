@@ -463,7 +463,8 @@ function viewRep() {
   const t = agg.tot;
   h += '<div class="sec">К перечислению за период</div><div class="pay"><div>НДФЛ в бюджет<b class="num">' + fmt(t.pitBudget) + '</b></div><div>ИНПС<b class="num">' + fmt(t.inps) + '</b></div><div>ЕСП<b class="num">' + fmt(t.esp) + '</b></div></div>';
   h += '<div class="btns"><button class="btn" data-act="xlsx">' + ICON.file + 'Excel</button><button class="btn sec2" data-act="repText">' + ICON.share + 'Текстом</button></div>' +
-    '<div class="btns"><button class="btn sec2" data-act="soliq">' + ICON.file + 'Файл для my.soliq.uz (приложение 4)</button></div>';
+    '<div class="btns"><button class="btn sec2" data-act="soliq">' + ICON.file + 'Файл для my.soliq.uz (приложение 4)</button></div>' +
+    '<div class="hint" style="margin:8px 2px 0">Графы 11 и 13 — нарастающим итогом с января (или с даты принятия) по выбранный месяц. Если в прошлых месяцах начисляли по-другому, поправьте суммы в этих месяцах на вкладке «Зарплата».</div>';
   h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры для сверки; отчётность подаётся и корректируется в личном кабинете my.soliq.uz (по НК: ежемесячно, до 15 числа следующего месяца; итог за год — до 15 февраля). Ставки проверьте в «Настройки → Правила».</div>';
   return h + "</div>";
 }

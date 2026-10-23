@@ -64,6 +64,15 @@
       return c;
     });
 
+    // в шаблоне у графы «рабочее время» формат «0» (0,5 выглядит как 1), а у сумм «0.0» (12000000,0): задаём читаемые форматы
+    let styles = txt(dec(F["xl/styles.xml"]));
+    const xfs = styles.match(/<cellXfs count="(\d+)">/), baseXf = +xfs[1];
+    styles = styles.replace(xfs[0], '<cellXfs count="' + (baseXf + 2) + '">').replace("</cellXfs>",
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1" applyProtection="1"><alignment horizontal="center" vertical="center"/><protection locked="0"/></xf>' +
+      '<xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1" applyProtection="1"><alignment horizontal="right" vertical="center"/><protection locked="0"/></xf></cellXfs>');
+    style[10] = String(baseXf);                                          // J — рабочее время (в ставках)
+    Object.keys(style).forEach(c => { if (style[c] === "11") style[c] = String(baseXf + 1); }); // суммы: #,##0.00
+
     const sums = {};
     const xml = rows.map((vals, i) => {
       const r = FIRST + i;
@@ -89,7 +98,7 @@
 
     const files = Object.keys(F).map(name => ({
       name,
-      data: name === "xl/worksheets/sheet1.xml" ? enc(sheet) : name === "xl/sharedStrings.xml" ? enc(sst) : dec(F[name])
+      data: name === "xl/worksheets/sheet1.xml" ? enc(sheet) : name === "xl/sharedStrings.xml" ? enc(sst) : name === "xl/styles.xml" ? enc(styles) : dec(F[name])
     }));
     return toB64(zipStore(files));
   };
