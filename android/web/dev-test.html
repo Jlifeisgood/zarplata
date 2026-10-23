@@ -18,6 +18,10 @@ for (const inside of [true, false]) for (const type of ["trud", "gph"]) for (let
   if (r.gross > 0 && calc({ amount: r.gross - 1, mode: "gross", type }, Rr).net >= net) { eq(0, 1, "minimal gross " + net); break; }
 }
 eq(calc({ amount: 1000000, mode: "gross", type: "trud" }, { ...R, budget: true }).esp, 250000, "budget");
+const IT = { ...R, itpark: true };
+eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, pit: 750000, inps: 10000, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
+eq(calc({ amount: 1000000, mode: "gross", type: "gph" }, IT), calc({ amount: 1000000, mode: "gross", type: "gph" }, R), "itpark gph = обычные ставки");
+for (let net = 0; net < 20000000; net += 54321) { const r = calc({ amount: net, mode: "net", type: "trud" }, IT); if (r.net !== net) { eq(r.net, net, "itpark reverse " + net); break; } }
 eq(calc({ amount: "abc", mode: "net", type: "trud" }).gross, 0, "garbage");
 eq(calc({ amount: -5, mode: "gross", type: "trud" }).net, 0, "negative");
 document.getElementById("o").textContent = (fails ? out.join("\n") : "ALL OK (" + cnt + " reverse cases)");

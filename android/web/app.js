@@ -116,12 +116,12 @@ window.handleBack = () => {
 function confirmBox(msg) { return window.confirm(msg); }
 
 /* ---------- общие блоки ---------- */
-function breakdown(r, rules, o) {
+function breakdown(r, rules, type) {
   const inside = rules.inpsInsidePit;
-  const espR = rules.budget ? rules.espBudget : rules.esp;
+  const rt = C.rates(rules, type), espR = rt.esp;
   let h = '<div class="calc">';
   h += '<div class="l"><span>Начислено</span><b class="num">' + fmt(r.gross) + '</b></div>';
-  h += '<div class="l"><span>НДФЛ ' + pct(rules.pit) + '</span><span class="num">− ' + fmt(r.pit) + '</span></div>';
+  h += '<div class="l"><span>НДФЛ ' + pct(rt.pit) + (rules.itpark && type !== "gph" ? " (IT Park)" : "") + '</span><span class="num">− ' + fmt(r.pit) + '</span></div>';
   if (r.inps > 0 && !inside) h += '<div class="l"><span>ИНПС ' + pct(rules.inps) + '</span><span class="num">− ' + fmt(r.inps) + '</span></div>';
   h += '<div class="l t"><span>На руки</span><span class="num">' + fmt(r.net) + '</span></div>';
   h += '</div><div class="calc">';
@@ -240,7 +240,7 @@ function updPreview() {
   else type = D.type;
   const r = C.calc({ amount: amt, mode: D.mode, type }, rules);
   if (amt > 0 && type === "trud" && r.gross < rules.mrot) hint = '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
-  el.innerHTML = amt > 0 ? breakdown(r, rules) + hint : '<div class="hint">Введите сумму — ниже появится расчёт.</div>';
+  el.innerHTML = amt > 0 ? breakdown(r, rules, type) + hint : '<div class="hint">Введите сумму — ниже появится расчёт.</div>';
 }
 function savePay() {
   const e = curDraftEmp(), amt = parseAmt($("#f-amt").value);
@@ -255,7 +255,7 @@ function savePay() {
 function payslip(e) {
   const { en, r } = calcEntry(e, ui.ym), R = rulesFor(ui.ym);
   const L = ["Расчётный листок", S.company.name ? "Компания: " + S.company.name : "", "Сотрудник: " + fullName(e), "Период: " + ymLabel(ui.ym), "",
-    "Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(R.pit) + ": " + fmt(r.pit) + " сум"];
+    "Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(C.rates(R, en.type).pit) + ": " + fmt(r.pit) + " сум"];
   if (r.inps) L.push("ИНПС " + pct(R.inps) + (R.inpsInsidePit ? " (входит в НДФЛ)" : "") + ": " + fmt(r.inps) + " сум");
   L.push("К выплате на руки: " + fmt(r.net) + " сум");
   return L.filter(x => x !== "" || true).join("\n");
@@ -438,7 +438,7 @@ function exportXlsx() {
 }
 function repText() {
   const agg = aggregate(repMonths()), t = agg.tot, R = rulesFor(ui.repYm);
-  const L = [repTitle(), "Сотрудников: " + agg.rows.length, "", "Начислено: " + fmt(t.gross), "НДФЛ " + pct(R.pit) + ": " + fmt(t.pit)];
+  const L = [repTitle(), "Сотрудников: " + agg.rows.length, "", "Начислено: " + fmt(t.gross), "НДФЛ" + (R.itpark ? "" : " " + pct(R.pit)) + ": " + fmt(t.pit)];
   if (t.inps) L.push("ИНПС " + pct(R.inps) + ": " + fmt(t.inps));
   L.push("На руки: " + fmt(t.net), "", "К перечислению:", "НДФЛ в бюджет: " + fmt(t.pitBudget), "ИНПС: " + fmt(t.inps), "ЕСП: " + fmt(t.esp), "", "Расход компании: " + fmt(t.cost));
   shareText(repTitle(), L.join("\n"));
@@ -451,8 +451,9 @@ function viewSet() {
   h += '<label class="f"><span>Название</span><input class="in" id="c-name" value="' + esc(S.company.name) + '" autocomplete="off"></label>' +
     '<label class="f"><span>ИНН</span><input class="in" id="c-inn" inputmode="numeric" maxlength="9" value="' + esc(S.company.inn) + '"></label>' +
     sw("swc", "split", S.company.split, "Есть производство", "Делить сотрудников и отчёты на АУП и производство") +
-    sw("swr", "budget", R.budget, "Бюджетная организация", "ЕСП по повышенной ставке " + pct(R.espBudget));
-  h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.budget ? R.espBudget : R.esp) + '</div>' +
+    sw("swr", "budget", R.budget, "Бюджетная организация", "ЕСП по повышенной ставке " + pct(R.espBudget)) +
+    sw("swr", "itpark", R.itpark, "Резидент IT Park", "Трудовые договоры: НДФЛ " + pct(R.pitIt) + ", ЕСП " + pct(R.espIt) + ". ГПХ — по обычным ставкам");
+  h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
   h += '<div class="sec">Оформление</div>' + seg("theme", S.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
@@ -467,6 +468,7 @@ function openRates() {
   openSheet('<h2>Правила ' + RULES_YEAR + ' года</h2><p class="sub">Поменялся закон — поправьте здесь. Действует с текущего месяца, прошлые месяцы не пересчитываются.</p>' +
     '<div class="note" style="margin:0 0 14px">Проект нового Налогового кодекса (ЕСП → «социальный налог», отмена 25% для бюджетных, новые сроки) пока не вступил в силу — в расчёте не учтён.</div>' +
     '<div class="two">' + f("r-pit", "НДФЛ, %", R.pit) + f("r-inps", "ИНПС, %", R.inps) + '</div><div class="two">' + f("r-esp", "ЕСП, %", R.esp) + f("r-espb", "ЕСП бюджет, %", R.espBudget) + '</div>' +
+    '<div class="sec" style="margin-top:4px">Резидент IT Park (трудовые договоры)</div><div class="two">' + f("r-pitit", "НДФЛ, %", R.pitIt) + f("r-espit", "ЕСП, %", R.espIt) + '</div>' +
     f("r-mrot", "МРОТ, сум (для подсказки)", R.mrot) +
     sw("swd", "inside", D.inside, "ИНПС входит в НДФЛ", "На руки = начислено − НДФЛ. Выключите, если ИНПС удерживается сверху НДФЛ") +
     sw("swd", "gph", D.gph, "Удерживать ИНПС с ГПХ", "Обычно ИНПС только по трудовым договорам") +
@@ -474,8 +476,8 @@ function openRates() {
 }
 function saveRates() {
   const n = id => Number(String($("#" + id).value).replace(",", ".").replace(/\s/g, ""));
-  const v = { pit: n("r-pit"), inps: n("r-inps"), esp: n("r-esp"), espBudget: n("r-espb"), mrot: n("r-mrot") };
-  if (Object.values(v).some(x => !isFinite(x) || x < 0) || v.pit >= 100) { toast("Проверьте числа"); return; }
+  const v = { pit: n("r-pit"), inps: n("r-inps"), esp: n("r-esp"), espBudget: n("r-espb"), pitIt: n("r-pitit"), espIt: n("r-espit"), mrot: n("r-mrot") };
+  if (Object.values(v).some(x => !isFinite(x) || x < 0) || v.pit >= 100 || v.pitIt >= 100) { toast("Проверьте числа"); return; }
   freezePast();
   Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph });
   save(); closeSheet(); render(); toast("Ставки сохранены");
@@ -585,7 +587,7 @@ const ACT = {
   xlsx: exportXlsx, repText,
   theme: t => { S.theme = t.dataset.v; save(); render(); },
   rates: openRates, saveRates,
-  resetRates: () => { freezePast(); const b = S.rules.budget; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
+  resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
   backup, restore: () => $("#restore-file").click(),
   wipe: () => {
     if (!confirmBox("Стереть всех сотрудников и все начисления? Это нельзя отменить.")) return;

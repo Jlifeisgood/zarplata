@@ -9,6 +9,9 @@
     inpsInsidePit: true,// ИНПС уменьшает НДФЛ к уплате (на руки = начислено − НДФЛ); false — удерживается сверху
     inpsGph: false,     // удерживать ИНПС с договоров ГПХ
     budget: false,      // организация бюджетная (ЕСП по повышенной ставке)
+    itpark: false,      // резидент IT Park: льготные ставки для трудовых договоров
+    pitIt: 7.5,         // НДФЛ резидента IT Park, %
+    espIt: 0,           // ЕСП резидента IT Park, %
     mrot: 1360000       // МРОТ с 01.09.2026 (УП-115) — только для подсказки о слишком маленькой сумме
   };
 
@@ -18,11 +21,19 @@
    * o: { amount, mode: 'gross'|'net', type: 'trud'|'gph' }
    * Возвращает суммы в целых сумах.
    */
+  /** Действующие ставки НДФЛ и ЕСП (в %) для вида договора. Льготы IT Park — только для трудовых договоров. */
+  function rates(R, type) {
+    R = R || DEFAULT_RULES;
+    if (R.itpark && type !== 'gph') return { pit: R.pitIt, esp: R.espIt };
+    return { pit: R.pit, esp: R.budget ? R.espBudget : R.esp };
+  }
+
   function calc(o, rules) {
     var R = rules || DEFAULT_RULES;
-    var pit = R.pit / 100;
+    var rt = rates(R, o.type);
+    var pit = rt.pit / 100;
     var inpsRate = (o.type === 'gph' && !R.inpsGph) ? 0 : R.inps / 100;
-    var espRate = (R.budget ? R.espBudget : R.esp) / 100;
+    var espRate = rt.esp / 100;
     var outside = !R.inpsInsidePit;
     var amount = Math.max(0, Number(o.amount) || 0);
     var gross;
@@ -47,7 +58,7 @@
     };
   }
 
-  var api = { DEFAULT_RULES: DEFAULT_RULES, calc: calc, r0: r0 };
+  var api = { DEFAULT_RULES: DEFAULT_RULES, calc: calc, rates: rates, r0: r0 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Calc = api;
 })(typeof window !== 'undefined' ? window : this);
