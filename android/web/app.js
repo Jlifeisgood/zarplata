@@ -42,6 +42,7 @@ function load() {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s && s.v === 1 && Array.isArray(s.emps)) {
       s.rules = Object.assign({}, C.DEFAULT_RULES, s.rules);
+      if (s.rules.mrot === 1271000) s.rules.mrot = C.DEFAULT_RULES.mrot; // МРОТ вырос с 01.09.2026
       s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
       s.months = s.months || {};
       return s;
@@ -414,7 +415,7 @@ function viewRep() {
   const t = agg.tot;
   h += '<div class="sec">К перечислению за период</div><div class="pay"><div>НДФЛ в бюджет<b class="num">' + fmt(t.pitBudget) + '</b></div><div>ИНПС<b class="num">' + fmt(t.inps) + '</b></div><div>ЕСП<b class="num">' + fmt(t.esp) + '</b></div></div>';
   h += '<div class="btns"><button class="btn" data-act="xlsx">' + ICON.file + 'Excel</button><button class="btn sec2" data-act="repText">' + ICON.share + 'Текстом</button></div>';
-  h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры; подача отчётности — через личный кабинет my.soliq.uz. Ставки и порядок ИНПС проверьте в «Настройки → Ставки».</div>';
+  h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры для сверки; отчётность подаётся и корректируется в личном кабинете my.soliq.uz (по данным открытых источников — ежемесячно, до 15 числа). Ставки проверьте в «Настройки → Правила».</div>';
   return h + "</div>";
 }
 function repTitle() { return (S.company.name ? S.company.name + " — " : "") + repLabel(); }
