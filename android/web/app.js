@@ -46,6 +46,7 @@ function load() {
       if (s.rules.mrot === 1271000) s.rules.mrot = C.DEFAULT_RULES.mrot; // МРОТ вырос с 01.09.2026
       s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
       s.months = s.months || {};
+      if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
       if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
         s.rv = 2; s.rules.inpsGph = true;
         Object.values(s.months).forEach(m => { if (m.rules) m.rules.inpsGph = true; });
@@ -96,7 +97,7 @@ function calcEntry(e, ym) {
   const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0 }, rulesEff(ym));
   return { en, r };
 }
-const ZERO = () => ({ gross: 0, exempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
+const ZERO = () => ({ gross: 0, exempt: 0, itExempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
 const KEYS = Object.keys(ZERO());
 function addTo(t, r) { KEYS.forEach(k => { t[k] += r[k] || 0; }); return t; }
 function sumList(list) { const t = ZERO(); list.forEach(r => addTo(t, r)); return t; }
@@ -473,21 +474,27 @@ function exportSoliq() {
   const mon = new Map(aggregate([last]).rows.map(x => [x.e.id, x]));
   const wb = XLSX.read(window.TPL_11101_20, { type: "base64", cellStyles: true });
   const ws = wb.Sheets.list01;
-  // дата создания рабочего места: введённая вручную, иначе 01.01.2025 (принят до 2025) или первое число месяца приёма
   // дата создания рабочего места: введённая вручную, иначе дата принятия; всё, что раньше 2025 года, — 01.01.2025 (требование шаблона)
   const created = e => { const d = e.wp || e.hire || e.from + "-01"; return d >= "2025-01-01" ? d.split("-").reverse().join(".") : "01.01.2025"; };
+  // льготы: каждая занимает тройку граф (номер льготы, совокупный необлагаемый доход, в т.ч. за период), начиная с графы 15 (P)
+  const slotTot = [];
   const rows = cum.rows.map((x, i) => {
-    const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph", ben = !gph && x.exempt > 0;
-    return [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
-      gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross, m.gross, x.pit, m.pit,
-      ben ? (e.benId || S.rules.benId || null) : null, ben ? x.exempt : null, ben ? m.exempt : null];
+    const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph";
+    const row = [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
+      gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross, m.gross, x.pit, m.pit];
+    const slots = [];
+    if (!gph && x.itExempt > 0) slots.push([S.rules.benIdIt || null, x.itExempt, m.itExempt]);
+    if (!gph && x.exempt > 0) slots.push([e.benId || S.rules.benId || null, x.exempt, m.exempt]);
+    slots.forEach((s, k) => { row.push(s[0], s[1], s[2]); slotTot[k] = slotTot[k] || [0, 0]; slotTot[k][0] += s[1]; slotTot[k][1] += s[2]; });
+    return row;
   });
   XLSX.utils.sheet_add_aoa(ws, rows, { origin: "B15" });
   const tot = (k) => cum.rows.reduce((s, x) => s + x[k], 0), totM = (k) => [...mon.values()].reduce((s, x) => s + x[k], 0);
-  [["L12", tot("gross")], ["M12", totM("gross")], ["N12", tot("pit")], ["O12", totM("pit")], ["Q12", tot("exempt")], ["R12", totM("exempt")]].forEach(([a, v]) => { if (ws[a]) ws[a].v = v; });
+  [["L12", tot("gross")], ["M12", totM("gross")], ["N12", tot("pit")], ["O12", totM("pit")]].forEach(([a, v]) => { if (ws[a]) ws[a].v = v; });
+  slotTot.forEach((s, k) => { [[16 + 3 * k, s[0]], [17 + 3 * k, s[1]]].forEach(([c, v]) => { const a = XLSX.utils.encode_cell({ r: 11, c }); if (ws[a]) ws[a].v = v; }); });
   const noPin = cum.rows.filter(x => !x.e.pinfl).length;
   const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId && !S.rules.benId).length;
-  if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (графа 15)"), 4200);
+  if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (карточка сотрудника)"), 4200);
   sendFile("Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     XLSX.write(wb, { type: "base64", bookType: "xlsx" }));
   if (noPin) setTimeout(() => toast("У " + noPin + " сотр. нет ПИНФЛ — допишите в файле или в приложении"), 1800);
@@ -526,7 +533,8 @@ function openRates() {
     '<div class="two">' + f("r-pit", "НДФЛ, %", R.pit) + f("r-inps", "ИНПС, %", R.inps) + '</div><div class="two">' + f("r-esp", "ЕСП, %", R.esp) + f("r-espb", "ЕСП бюджет, %", R.espBudget) + '</div>' +
     '<div class="sec" style="margin-top:4px">Резидент IT Park (трудовые договоры)</div><div class="two">' + f("r-pitit", "НДФЛ, %", R.pitIt) + f("r-espit", "ЕСП, %", R.espIt) + '</div>' +
     f("r-mrot", "МРОТ, сум (для подсказки и льготы ст. 380)", R.mrot) +
-    '<label class="f"><span>ID льготы НДФЛ по умолчанию (ст. 380, для файла в кабинет)</span><input class="in" id="r-benid" value="' + esc(R.benId || "") + '"></label>' +
+    '<label class="f"><span>ID льготы НДФЛ: IT Park (для файла в кабинет)</span><input class="in" id="r-benidit" value="' + esc(R.benIdIt || "") + '"></label>' +
+    '<label class="f"><span>ID льготы НДФЛ: ст. 380 по умолчанию (если не указан у сотрудника)</span><input class="in" id="r-benid" value="' + esc(R.benId || "") + '"></label>' +
     sw("swd", "inside", D.inside, "ИНПС входит в НДФЛ", "На руки = начислено − НДФЛ. Выключите, если ИНПС удерживается сверху НДФЛ") +
     sw("swd", "gph", D.gph, "Удерживать ИНПС с ГПХ", "По ПП-4086 (п. 5) — 0,1% от всех доходов, облагаемых НДФЛ, в том числе по ГПХ") +
     '<div class="stack"><button class="btn" data-act="saveRates">Сохранить</button><button class="btn ghost" data-act="resetRates">Вернуть стандартные</button></div>');
@@ -536,7 +544,7 @@ function saveRates() {
   const v = { pit: n("r-pit"), inps: n("r-inps"), esp: n("r-esp"), espBudget: n("r-espb"), pitIt: n("r-pitit"), espIt: n("r-espit"), mrot: n("r-mrot") };
   if (Object.values(v).some(x => !isFinite(x) || x < 0) || v.pit >= 100 || v.pitIt >= 100) { toast("Проверьте числа"); return; }
   freezePast();
-  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim() });
+  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim(), benIdIt: $("#r-benidit").value.trim() });
   save(); closeSheet(); render(); toast("Ставки сохранены");
 }
 

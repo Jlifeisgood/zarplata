@@ -6,7 +6,7 @@ const { calc, DEFAULT_RULES } = window.Calc;
 const out = []; let fails = 0;
 function eq(a, b, m) { const ok = JSON.stringify(a) === JSON.stringify(b); if (!ok) { fails++; out.push("FAIL " + m + " got " + JSON.stringify(a) + " want " + JSON.stringify(b)); } }
 const R = DEFAULT_RULES;
-eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, exempt: 0, pit: 600000, inps: 5000, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
+eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, exempt: 0, itExempt: 0, pit: 600000, inps: 5000, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
 const o = calc({ amount: 5000000, mode: "gross", type: "trud" }, { ...R, inpsInsidePit: false });
 eq([o.net, o.pitBudget], [4395000, 600000], "outside");
 const g = calc({ amount: 1000000, mode: "gross", type: "gph" }, { ...R, inpsGph: false });
@@ -21,7 +21,7 @@ for (const inside of [true, false]) for (const type of ["trud", "gph"]) for (con
 }
 eq(calc({ amount: 1000000, mode: "gross", type: "trud" }, { ...R, budget: true }).esp, 250000, "budget");
 const IT = { ...R, itpark: true };
-eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, exempt: 0, pit: 750000, inps: 10000, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
+eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, exempt: 0, itExempt: 3750000, pit: 750000, inps: 10000, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
 eq(calc({ amount: 1000000, mode: "gross", type: "gph" }, IT), calc({ amount: 1000000, mode: "gross", type: "gph" }, R), "itpark gph = обычные ставки");
 for (let net = 0; net < 20000000; net += 54321) { const r = calc({ amount: net, mode: "net", type: "trud" }, IT); if (r.net !== net) { eq(r.net, net, "itpark reverse " + net); break; } }
 // льгота ст. 380: 1,41 МРОТ = 1 917 600 не облагается
