@@ -11,6 +11,18 @@ const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&a
 const fmt = n => String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 const pct = n => String(n).replace(".", ",") + "%";
 const pad = n => String(n).padStart(2, "0");
+/* Даты вводятся руками как дд.мм.гггг (цифровая клавиатура): системный календарь в WebView открывается не везде */
+const todayIso = () => { const d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+const isoToDmy = s => s ? s.split("-").reverse().join(".") : "";
+const fmtDmy = s => { const d = String(s).replace(/\D/g, "").slice(0, 8); return d.length > 4 ? d.slice(0, 2) + "." + d.slice(2, 4) + "." + d.slice(4) : d.length > 2 ? d.slice(0, 2) + "." + d.slice(2) : d; };
+function parseDmy(s) {
+  const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(String(s || "").trim());
+  if (!m) return "";
+  const d = +m[1], mo = +m[2], y = +m[3], dt = new Date(y, mo - 1, d);
+  if (y < 2000 || y > 2100 || dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return "";
+  return y + "-" + pad(mo) + "-" + pad(d);
+}
+const dateField = (id, iso, label) => '<label class="f"><span>' + label + '</span><input class="in dmy" id="' + id + '" inputmode="numeric" maxlength="10" placeholder="дд.мм.гггг" value="' + esc(isoToDmy(iso)) + '" autocomplete="off"></label>';
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const curYm = () => { const d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1); };
 const addYm = (ym, d) => { const [y, m] = ym.split("-").map(Number); const t = y * 12 + (m - 1) + d; return Math.floor(t / 12) + "-" + pad((t % 12) + 1); };
@@ -349,16 +361,16 @@ function openEmp(id) {
     '<div class="f"><span>Как вводите сумму</span>' + seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки (обратный расчёт)"]]) + '</div>' +
     '<label class="f"><span id="amt-l">' + (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + ' *</span><input class="in amt" id="f-amt" inputmode="numeric" value="' + (v.amount ? fmt(v.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
-    '<div class="two"><label class="f"><span>Дата принятия *</span><input class="in" type="date" id="f-hire" value="' + esc(v.hire || (e ? v.from + "-01" : (ui.ym === curYm() ? new Date().toLocaleDateString("sv") : ui.ym + "-01"))) + '"></label>' +
-    '<label class="f"><span>Последний месяц</span><input class="in" type="month" id="f-to" value="' + esc(v.to || "") + '"></label></div>' +
-    (e ? '<div class="hint">«Последний месяц» заполняйте при увольнении — дальше начисления не будет.</div>' : "") +
+    '<div class="two">' + dateField("f-hire", v.hire || (e ? v.from + "-01" : (ui.ym === curYm() ? todayIso() : ui.ym + "-01")), "Дата принятия *") +
+    dateField("f-to", v.fire || (v.to ? v.to + "-" + pad(new Date(+v.to.slice(0, 4), +v.to.slice(5), 0).getDate()) : ""), "Дата увольнения") + '</div>' +
+    (e ? '<div class="hint">Дату увольнения заполняйте, когда сотрудник уходит — начисления будут по месяц увольнения включительно.</div>' : "") +
     '<details class="more"><summary>Для отчёта в налоговую</summary><div class="f"><span>Статус</span>' + seg("res", D.res, [["1", "Резидент"], ["2", "Нерезидент"]]) + '</div>' +
     '<div class="f"><span>Форма контракта (для трудовых)</span>' + seg("ck", D.ck, [["1", "Основной"], ["2", "Совместитель"], ["5", "Надомник"]]) + '</div>' +
     '<label class="f"><span>Рабочее время, ставок (1; 0,5; 0,25…)</span><input class="in" id="f-rate" inputmode="decimal" value="' + String(v.rate || 1).replace(".", ",") + '"></label>' +
     '<label class="f"><span>Рабочее место</span><select class="in" id="f-seat">' +
       [["1", "Постоянное"], ["2", "За счёт вакансий на 01.01.2025"], ["3", "Вновь созданное в текущем году"], ["4", "Сезонное"], ["5", "Надомник"]]
         .map(o => '<option value="' + o[0] + '"' + (String(v.seat || 1) === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") + '</select></label>' +
-    '<label class="f"><span>Дата создания рабочего места</span><input class="in" type="date" id="f-wp" value="' + esc(v.wp || "") + '"></label>' +
+    dateField("f-wp", v.wp || "", "Дата создания рабочего места") +
     '<div class="hint" style="margin-top:-6px">Если создано до 2025 года, в файле будет 01.01.2025 (так требует шаблон). Пусто — первое число месяца приёма.</div>' +
     '<label class="f"><span>Номер льготы (ID) из кабинета — если есть льгота ст. 380</span><input class="in" id="f-benid" value="' + esc(v.benId || "") + '" placeholder="по умолчанию ' + esc(S.rules.benId || "—") + '" autocomplete="off"></label></details>' +
     '<div class="stack"><button class="btn" data-act="saveEmp">Сохранить</button>' +
@@ -371,14 +383,15 @@ function saveEmp() {
   let bad = false;
   [["f-last", !last], ["f-first", !first], ["f-amt", !(amt > 0)], ["f-pinfl", pinfl && pinfl.length !== 14]].forEach(([id, b]) => { $("#" + id).classList.toggle("bad", !!b); bad = bad || !!b; });
   if (bad) { toast(pinfl && pinfl.length !== 14 ? "ПИНФЛ — ровно 14 цифр" : "Заполните отмеченные поля"); return; }
-  const hire = g("f-hire"), to = g("f-to");
-  $("#f-hire").classList.toggle("bad", !hire);
-  if (!hire) { toast("Укажите дату принятия"); return; }
-  const from = hire.slice(0, 7);
-  if (to && to < from) { toast("Последний месяц раньше начала работы"); return; }
+  const hire = parseDmy($("#f-hire").value), fire = parseDmy($("#f-to").value), wp = parseDmy($("#f-wp").value);
+  const badDate = [["f-hire", !hire], ["f-to", $("#f-to").value.trim() && !fire], ["f-wp", $("#f-wp").value.trim() && !wp]];
+  badDate.forEach(([id, b]) => $("#" + id).classList.toggle("bad", !!b));
+  if (badDate.some(x => x[1])) { toast(!hire ? "Укажите дату принятия: дд.мм.гггг" : "Дата в формате дд.мм.гггг"); return; }
+  const from = hire.slice(0, 7), to = fire ? fire.slice(0, 7) : "";
+  if (fire && fire < hire) { toast("Дата увольнения раньше даты принятия"); return; }
   const rate = Number(g("f-rate").replace(",", ".")) || 1;
-  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to: to || "", res: D.res, rate,
-    ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp: $("#f-wp").value };
+  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to, fire, res: D.res, rate,
+    ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
     if (e.amount !== amt || e.mode !== D.mode || e.type !== D.type || e.dept !== data.dept || (e.ben || "") !== data.ben) freezePast();
@@ -539,8 +552,7 @@ function viewSet() {
     sw("swc", "split", S.company.split, "Есть производство", "Делить сотрудников и отчёты на АУП и производство") +
     sw("swr", "budget", R.budget, "Бюджетная организация", "ЕСП по повышенной ставке " + pct(R.espBudget)) +
     sw("swr", "itpark", R.itpark, "Резидент IT Park", "Трудовые договоры: НДФЛ " + pct(R.pitIt) + ", ЕСП " + pct(R.espIt) + ". ГПХ — по обычным ставкам. Действует до 01.01.2028 (УП-5099, п. 5 и 8)") +
-    (R.itpark ? '<div class="two"><label class="f"><span>Включён в реестр IT Park</span><input class="in" type="date" id="c-itfrom" value="' + esc(R.itFrom || "") + '"></label>' +
-      '<label class="f"><span>Статус до (если утрачен)</span><input class="in" type="date" id="c-itto" value="' + esc(R.itTo || "") + '"></label></div>' +
+    (R.itpark ? '<div class="two">' + dateField("c-itfrom", R.itFrom, "Включён в реестр IT Park") + dateField("c-itto", R.itTo, "Статус до (если утрачен)") + '</div>' +
       '<div class="hint">Льгота считается по месяцам: если дата — 1-е число, то с этого месяца, иначе со следующего (льготы действуют с 1-го числа месяца, следующего за включением в реестр). Пусто — льгота для всех месяцев.</div>' : "");
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
@@ -743,7 +755,7 @@ const ACT = {
   xlsx: exportXlsx, repText, soliq: exportSoliq,
   theme: t => { REG.theme = t.dataset.v; save(); render(); },
   rates: openRates, saveRates,
-  resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
+  resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark, f = S.rules.itFrom, t = S.rules.itTo; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it, itFrom: f, itTo: t }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
   backup, restore: () => $("#restore-file").click(),
   companies: openCompanies, switchCo: t => switchCompany(t.dataset.id), newCo: openNewCo, createCo: createCompany, delCo: deleteCompany,
   wipe: () => {
@@ -761,8 +773,16 @@ document.addEventListener("click", ev => {
   if (t && ACT[t.dataset.act]) ACT[t.dataset.act](t, ev);
 });
 $("#nav").addEventListener("click", ev => { const b = ev.target.closest("button[data-tab]"); if (b) setTab(b.dataset.tab); });
+function applyItDate(el) {
+  const key = el.id === "c-itfrom" ? "itFrom" : "itTo", raw = el.value.trim(), iso = parseDmy(raw);
+  if (raw && !iso) return;                 // дата ещё вводится или неверная
+  S.rules[key] = iso;
+  if (S.rules.itFrom && S.rules.itTo && S.rules.itTo < S.rules.itFrom) { S.rules.itTo = ""; el.value = ""; toast("«До» раньше даты включения — очищено"); }
+  save();
+}
 document.addEventListener("input", ev => {
   const el = ev.target;
+  if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
   if (el.id === "f-amt") {
     const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; el.classList.remove("bad"); updPreview();
   } else if (el.id === "f-ben") updPreview();
@@ -774,11 +794,7 @@ document.addEventListener("input", ev => {
 document.addEventListener("change", ev => {
   const el = ev.target;
   if (el.id === "restore-file" && el.files[0]) { restoreFrom(el.files[0]); el.value = ""; }
-  else if (el.id === "c-itfrom" || el.id === "c-itto") {
-    S.rules[el.id === "c-itfrom" ? "itFrom" : "itTo"] = el.value;
-    if (S.rules.itFrom && S.rules.itTo && S.rules.itTo < S.rules.itFrom) { S.rules.itTo = ""; toast("«До» раньше даты включения — очищено"); }
-    save(); render();
-  }
+  else if (el.id === "c-itfrom" || el.id === "c-itto") { applyItDate(el); if (el.value.trim() && !parseDmy(el.value)) toast("Дата в формате дд.мм.гггг"); }
 });
 document.addEventListener("keydown", ev => { if (ev.key === "Escape" && sheetOpen()) closeSheet(); });
 
