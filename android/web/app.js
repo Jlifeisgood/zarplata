@@ -94,7 +94,16 @@ function entryFor(e, ym) {
 }
 /* МРОТ на месяц: до 01.09.2026 действовал прежний (УП-91: 1 271 000), если пользователь не менял значение вручную */
 const mrotFor = (ym, R) => (R.mrot === C.DEFAULT_RULES.mrot && ym < "2026-09") ? 1271000 : R.mrot;
-const rulesEff = ym => Object.assign({}, rulesFor(ym), { mrot: mrotFor(ym, rulesFor(ym)) });
+/* Резидентство IT Park: льгота по месяцам. Дата включения в реестр — 1-е число: льгота с этого месяца; иначе со следующего месяца
+   (льготы применяются с 1-го числа месяца, следующего за включением в реестр). «По» — включительно по месяц этой даты. Хранится вне снимков ставок. */
+function itActive(ym) {
+  const c = S.rules;
+  if (!c.itpark) return false;
+  if (c.itFrom) { const f = c.itFrom.slice(0, 7); if (ym < (c.itFrom.slice(8) === "01" ? f : addYm(f, 1))) return false; }
+  if (c.itTo && ym > c.itTo.slice(0, 7)) return false;
+  return true;
+}
+const rulesEff = ym => Object.assign({}, rulesFor(ym), { mrot: mrotFor(ym, rulesFor(ym)), itpark: itActive(ym) });
 /* Прошлые месяцы «замораживаем» перед изменением ставок или суммы по умолчанию: задним числом ничего не пересчитывается. */
 function freezePast() {
   const cur = curYm();
@@ -283,7 +292,7 @@ function savePay() {
   save(); closeSheet(); render(); toast("Сохранено");
 }
 function payslip(e) {
-  const { en, r } = calcEntry(e, ui.ym), R = rulesFor(ui.ym);
+  const { en, r } = calcEntry(e, ui.ym), R = rulesEff(ui.ym);
   const L = ["Расчётный листок", S.company.name ? "Компания: " + S.company.name : "", "Сотрудник: " + fullName(e), "Период: " + ymLabel(ui.ym), "",
     "Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(C.rates(R, en.type).pit) + ": " + fmt(r.pit) + " сум"];
   if (r.inps) L.push("ИНПС " + pct(R.inps) + (R.inpsInsidePit ? " (входит в НДФЛ)" : "") + ": " + fmt(r.inps) + " сум");
@@ -514,8 +523,8 @@ function exportSoliq() {
   if (noPin) setTimeout(() => toast("У " + noPin + " сотр. нет ПИНФЛ — допишите в файле или в приложении"), 1800);
 }
 function repText() {
-  const agg = aggregate(repMonths()), t = agg.tot, R = rulesFor(ui.repYm);
-  const L = [repTitle(), "Сотрудников: " + agg.rows.length, "", "Начислено: " + fmt(t.gross), "НДФЛ" + (R.itpark ? "" : " " + pct(R.pit)) + ": " + fmt(t.pit)];
+  const agg = aggregate(repMonths()), t = agg.tot, R = rulesEff(ui.repYm);
+  const L = [repTitle(), "Сотрудников: " + agg.rows.length, "", "Начислено: " + fmt(t.gross), "НДФЛ" + (S.rules.itpark ? "" : " " + pct(R.pit)) + ": " + fmt(t.pit)];
   if (t.inps) L.push("ИНПС " + pct(R.inps) + ": " + fmt(t.inps));
   L.push("На руки: " + fmt(t.net), "", "К перечислению:", "НДФЛ в бюджет: " + fmt(t.pitBudget), "ИНПС: " + fmt(t.inps), "ЕСП: " + fmt(t.esp), "", "Расход компании: " + fmt(t.cost));
   shareText(repTitle(), L.join("\n"));
@@ -529,7 +538,10 @@ function viewSet() {
     '<label class="f"><span>ИНН</span><input class="in" id="c-inn" inputmode="numeric" maxlength="9" value="' + esc(S.company.inn) + '"></label>' +
     sw("swc", "split", S.company.split, "Есть производство", "Делить сотрудников и отчёты на АУП и производство") +
     sw("swr", "budget", R.budget, "Бюджетная организация", "ЕСП по повышенной ставке " + pct(R.espBudget)) +
-    sw("swr", "itpark", R.itpark, "Резидент IT Park", "Трудовые договоры: НДФЛ " + pct(R.pitIt) + ", ЕСП " + pct(R.espIt) + ". ГПХ — по обычным ставкам. Действует до 01.01.2028 (УП-5099, п. 5 и 8)");
+    sw("swr", "itpark", R.itpark, "Резидент IT Park", "Трудовые договоры: НДФЛ " + pct(R.pitIt) + ", ЕСП " + pct(R.espIt) + ". ГПХ — по обычным ставкам. Действует до 01.01.2028 (УП-5099, п. 5 и 8)") +
+    (R.itpark ? '<div class="two"><label class="f"><span>Включён в реестр IT Park</span><input class="in" type="date" id="c-itfrom" value="' + esc(R.itFrom || "") + '"></label>' +
+      '<label class="f"><span>Статус до (если утрачен)</span><input class="in" type="date" id="c-itto" value="' + esc(R.itTo || "") + '"></label></div>' +
+      '<div class="hint">Льгота считается по месяцам: если дата — 1-е число, то с этого месяца, иначе со следующего (льготы действуют с 1-го числа месяца, следующего за включением в реестр). Пусто — льгота для всех месяцев.</div>' : "");
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
   h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
@@ -701,7 +713,7 @@ const ACT = {
     D[k] = !D[k]; t.classList.toggle("on", D[k]);
   },
   swc: t => { S.company[t.dataset.k] = !S.company[t.dataset.k]; save(); render(); },
-  swr: t => { freezePast(); S.rules[t.dataset.k] = !S.rules[t.dataset.k]; save(); render(); },
+  swr: t => { if (t.dataset.k !== "itpark") freezePast(); S.rules[t.dataset.k] = !S.rules[t.dataset.k]; save(); render(); },
   start: () => {
     S.company.name = $("#w-name").value.trim(); S.company.inn = $("#w-inn").value.replace(/\D/g, "");
     S.company.split = !!(D && D.split); S.setup = true; D = null; save(); ui.tab = "pay"; render();
@@ -759,7 +771,15 @@ document.addEventListener("input", ev => {
   if (el.id === "c-inn") { S.company.inn = el.value; save(); }
   if (el.classList.contains("bad")) el.classList.remove("bad");
 });
-document.addEventListener("change", ev => { if (ev.target.id === "restore-file" && ev.target.files[0]) { restoreFrom(ev.target.files[0]); ev.target.value = ""; } });
+document.addEventListener("change", ev => {
+  const el = ev.target;
+  if (el.id === "restore-file" && el.files[0]) { restoreFrom(el.files[0]); el.value = ""; }
+  else if (el.id === "c-itfrom" || el.id === "c-itto") {
+    S.rules[el.id === "c-itfrom" ? "itFrom" : "itTo"] = el.value;
+    if (S.rules.itFrom && S.rules.itTo && S.rules.itTo < S.rules.itFrom) { S.rules.itTo = ""; toast("«До» раньше даты включения — очищено"); }
+    save(); render();
+  }
+});
 document.addEventListener("keydown", ev => { if (ev.key === "Escape" && sheetOpen()) closeSheet(); });
 
 D = { split: false };
