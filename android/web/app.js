@@ -445,7 +445,7 @@ function tableHtml(rep) {
   let h = '<div class="tw"><table><thead><tr>' + rep.head.map((c, i) => "<th class='" + (i ? "" : "l") + "'>" + esc(c) + "</th>").join("") + "</tr></thead><tbody>";
   rep.body.forEach(r => {
     if (r.t === "grp") h += "<tr class='grp'><td colspan='" + rep.head.length + "'>" + esc(r.cells[0]) + "</td></tr>";
-    else h += "<tr class='" + r.t + "'>" + r.cells.map((v, i) => cell(v, i === 0)).join("") + "</tr>";
+    else h += "<tr class='" + (r.t === "row" ? "" : r.t) + "'>" + r.cells.map((v, i) => cell(v, i === 0)).join("") + "</tr>";
   });
   return h + "</tbody></table></div>";
 }
