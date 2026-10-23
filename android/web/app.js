@@ -292,8 +292,8 @@ function viewTeam() {
 }
 function openEmp(id) {
   const e = id ? S.emps.find(x => x.id === id) : null;
-  D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, touchedMode: true }
-        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", touchedMode: false };
+  D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, res: e.res || "1", touchedMode: true }
+        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", touchedMode: false };
   const v = e || { last: "", first: "", mid: "", pinfl: "", pos: "", amount: 0, from: ui.ym, to: "" };
   openSheet('<h2>' + (e ? "Сотрудник" : "Новый сотрудник") + '</h2><p class="sub">' + (e ? "Изменения суммы действуют с текущего месяца, прошлые месяцы не пересчитываются." : "Заполните основное — остальное можно добавить позже.") + '</p>' +
     '<label class="f"><span>Фамилия *</span><input class="in" id="f-last" value="' + esc(v.last) + '" autocomplete="off"></label>' +
@@ -309,6 +309,8 @@ function openEmp(id) {
     '<div class="two"><label class="f"><span>Работает с</span><input class="in" type="month" id="f-from" value="' + esc(v.from) + '"></label>' +
     '<label class="f"><span>Последний месяц</span><input class="in" type="month" id="f-to" value="' + esc(v.to || "") + '"></label></div>' +
     (e ? '<div class="hint">«Последний месяц» заполняйте при увольнении — дальше начисления не будет.</div>' : "") +
+    '<details class="more"><summary>Для отчёта в налоговую</summary><div class="f"><span>Статус</span>' + seg("res", D.res, [["1", "Резидент"], ["2", "Нерезидент"]]) + '</div>' +
+    '<label class="f"><span>Рабочее время, ставок (1; 0,5; 0,25…)</span><input class="in" id="f-rate" inputmode="decimal" value="' + String(v.rate || 1).replace(".", ",") + '"></label></details>' +
     '<div class="stack"><button class="btn" data-act="saveEmp">Сохранить</button>' +
     (e ? '<button class="btn bad" data-act="delEmp">Удалить сотрудника</button>' : "") + '</div>');
   updPreview();
@@ -321,7 +323,8 @@ function saveEmp() {
   if (bad) { toast(pinfl && pinfl.length !== 14 ? "ПИНФЛ — ровно 14 цифр" : "Заполните отмеченные поля"); return; }
   const from = g("f-from") || ui.ym, to = g("f-to");
   if (to && to < from) { toast("Последний месяц раньше начала работы"); return; }
-  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, to: to || "" };
+  const rate = Number(g("f-rate").replace(",", ".")) || 1;
+  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, to: to || "", res: D.res, rate };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
     if (e.amount !== amt || e.mode !== D.mode || e.type !== D.type || e.dept !== data.dept) freezePast();
@@ -414,7 +417,8 @@ function viewRep() {
   h += '<div class="hint" style="margin:0 2px 8px">Таблицу можно листать вбок →</div>' + tableHtml(rep);
   const t = agg.tot;
   h += '<div class="sec">К перечислению за период</div><div class="pay"><div>НДФЛ в бюджет<b class="num">' + fmt(t.pitBudget) + '</b></div><div>ИНПС<b class="num">' + fmt(t.inps) + '</b></div><div>ЕСП<b class="num">' + fmt(t.esp) + '</b></div></div>';
-  h += '<div class="btns"><button class="btn" data-act="xlsx">' + ICON.file + 'Excel</button><button class="btn sec2" data-act="repText">' + ICON.share + 'Текстом</button></div>';
+  h += '<div class="btns"><button class="btn" data-act="xlsx">' + ICON.file + 'Excel</button><button class="btn sec2" data-act="repText">' + ICON.share + 'Текстом</button></div>' +
+    '<div class="btns"><button class="btn sec2" data-act="soliq">' + ICON.file + 'Файл для my.soliq.uz (приложение 4)</button></div>';
   h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры для сверки; отчётность подаётся и корректируется в личном кабинете my.soliq.uz (по НК: ежемесячно, до 15 числа следующего месяца; итог за год — до 15 февраля). Ставки проверьте в «Настройки → Правила».</div>';
   return h + "</div>";
 }
@@ -432,22 +436,31 @@ function exportXlsx() {
     Object.keys(ws).forEach(a => { if (a[0] !== "!" && typeof ws[a].v === "number") ws[a].z = "#,##0"; });
     XLSX.utils.book_append_sheet(wb, ws, name);
   });
-  // Данные для приложения 4 к расчёту по НДФЛ и соцналогу: в кабинете отчёт подаётся нарастающим итогом с начала года
-  const last = repMonths().slice(-1)[0], yr = last.slice(0, 4);
-  const cum = aggregate(Array.from({ length: +last.slice(5) }, (_, i) => yr + "-" + pad(i + 1)));
-  const mon = new Map(aggregate([last]).rows.map(x => [x.e.id, x]));
-  const a4 = [[S.company.name || "Организация"], ["ИНН: " + (S.company.inn || "—")],
-    ["Данные для приложения 4 · " + ymLabel(last) + " · нарастающим итогом с начала года"],
-    ["Порядок граф условный: перенесите значения в шаблон приложения 4 из кабинета my.soliq.uz"], [],
-    ["№", "ФИО", "ПИНФЛ", "Статус", "Начислено за месяц", "Начислено с начала года", "НДФЛ за месяц", "НДФЛ с начала года", "ИНПС с начала года", "Договор"]];
-  cum.rows.forEach((x, i) => { const m = mon.get(x.e.id) || ZERO(); a4.push([i + 1, fullName(x.e), x.e.pinfl || "", "резидент", m.gross, x.gross, m.pit, x.pit, x.inps, x.type === "gph" ? "ГПХ" : "трудовой"]); });
-  const ws4 = XLSX.utils.aoa_to_sheet(a4);
-  ws4["!cols"] = [5, 34, 18, 11, 18, 20, 15, 18, 16, 11].map(w => ({ wch: w }));
-  Object.keys(ws4).forEach(a => { if (a[0] !== "!" && typeof ws4[a].v === "number" && a.replace(/\D/g, "") > 6) ws4[a].z = "#,##0"; });
-  XLSX.utils.book_append_sheet(wb, ws4, "Прил.4 (данные)");
   const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
   const fname = "Зарплата_" + repLabel().replace(/\s+/g, "_") + ".xlsx";
   sendFile(fname, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b64);
+}
+/* Приложение 4 к расчёту НДФЛ и соцналога (шаблон 11101_20 из my.soliq.uz): данные с 15-й строки, нарастающим итогом с начала года */
+function exportSoliq() {
+  const last = repMonths().slice(-1)[0], yr = last.slice(0, 4);
+  const cum = aggregate(Array.from({ length: +last.slice(5) }, (_, i) => yr + "-" + pad(i + 1)));
+  if (!cum.rows.length) { toast("Нет данных за период"); return; }
+  const mon = new Map(aggregate([last]).rows.map(x => [x.e.id, x]));
+  const wb = XLSX.read(window.TPL_11101_20, { type: "base64", cellStyles: true });
+  const ws = wb.Sheets.list01;
+  const created = e => e.from < "2025-01" ? "01.01.2025" : "01." + e.from.slice(5) + "." + e.from.slice(0, 4);
+  const rows = cum.rows.map((x, i) => {
+    const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph";
+    return [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
+      gph ? 3 : 1, gph ? null : (e.rate || 1), gph ? null : 1, x.gross, m.gross, x.pit, m.pit];
+  });
+  XLSX.utils.sheet_add_aoa(ws, rows, { origin: "B15" });
+  const tot = (k) => cum.rows.reduce((s, x) => s + x[k], 0), totM = [...mon.values()].reduce((s, x) => s + x.gross, 0), totMp = [...mon.values()].reduce((s, x) => s + x.pit, 0);
+  [["L12", tot("gross")], ["M12", totM], ["N12", tot("pit")], ["O12", totMp]].forEach(([a, v]) => { if (ws[a]) ws[a].v = v; });
+  const noPin = cum.rows.filter(x => !x.e.pinfl).length;
+  sendFile("Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    XLSX.write(wb, { type: "base64", bookType: "xlsx" }));
+  if (noPin) setTimeout(() => toast("У " + noPin + " сотр. нет ПИНФЛ — допишите в файле или в приложении"), 1800);
 }
 function repText() {
   const agg = aggregate(repMonths()), t = agg.tot, R = rulesFor(ui.repYm);
@@ -597,7 +610,7 @@ const ACT = {
   kind: t => { ui.kind = t.dataset.v; render(); },
   per: t => { ui.per = t.dataset.v; render(); },
   repNav: t => { ui.repYm = addYm(ui.repYm, +t.dataset.d * (ui.per === "month" ? 1 : ui.per === "quarter" ? 3 : 12)); render(); },
-  xlsx: exportXlsx, repText,
+  xlsx: exportXlsx, repText, soliq: exportSoliq,
   theme: t => { S.theme = t.dataset.v; save(); render(); },
   rates: openRates, saveRates,
   resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it }); save(); closeSheet(); render(); toast("Стандартные ставки"); },

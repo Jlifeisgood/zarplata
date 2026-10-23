@@ -170,3 +170,6 @@ body.wel-on .tabs{display:none}
 .tw td:first-child,.tw th:first-child{position:sticky;left:0;background:var(--card);z-index:1;box-shadow:1px 0 0 var(--line)}
 .tw tr.grp td:first-child{background:var(--soft)}
 .tw tr.tot td:first-child{background:var(--soft)}
+details.more{margin:0 0 14px;background:var(--card);border-radius:14px;box-shadow:var(--shadow);padding:0 14px}
+details.more summary{padding:13px 0;font-weight:600;color:var(--pri);cursor:pointer}
+details.more[open] summary{border-bottom:1px solid var(--line);margin-bottom:12px}
