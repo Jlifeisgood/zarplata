@@ -472,12 +472,9 @@ function exportSoliq() {
   const cum = aggregate(Array.from({ length: +last.slice(5) }, (_, i) => yr + "-" + pad(i + 1)));
   if (!cum.rows.length) { toast("Нет данных за период"); return; }
   const mon = new Map(aggregate([last]).rows.map(x => [x.e.id, x]));
-  const wb = XLSX.read(window.TPL_11101_20, { type: "base64", cellStyles: true });
-  const ws = wb.Sheets.list01;
   // дата создания рабочего места: введённая вручную, иначе дата принятия; всё, что раньше 2025 года, — 01.01.2025 (требование шаблона)
   const created = e => { const d = e.wp || e.hire || e.from + "-01"; return d >= "2025-01-01" ? d.split("-").reverse().join(".") : "01.01.2025"; };
   // льготы: каждая занимает тройку граф (номер льготы, совокупный необлагаемый доход, в т.ч. за период), начиная с графы 15 (P)
-  const slotTot = [];
   const rows = cum.rows.map((x, i) => {
     const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph";
     const row = [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
@@ -485,18 +482,14 @@ function exportSoliq() {
     const slots = [];
     if (!gph && x.itExempt > 0) slots.push([S.rules.benIdIt || null, x.itExempt, m.itExempt]);
     if (!gph && x.exempt > 0) slots.push([e.benId || S.rules.benId || null, x.exempt, m.exempt]);
-    slots.forEach((s, k) => { row.push(s[0], s[1], s[2]); slotTot[k] = slotTot[k] || [0, 0]; slotTot[k][0] += s[1]; slotTot[k][1] += s[2]; });
+    slots.forEach(s => row.push(s[0], s[1], s[2]));
     return row;
   });
-  XLSX.utils.sheet_add_aoa(ws, rows, { origin: "B15" });
-  const tot = (k) => cum.rows.reduce((s, x) => s + x[k], 0), totM = (k) => [...mon.values()].reduce((s, x) => s + x[k], 0);
-  [["L12", tot("gross")], ["M12", totM("gross")], ["N12", tot("pit")], ["O12", totM("pit")]].forEach(([a, v]) => { if (ws[a]) ws[a].v = v; });
-  slotTot.forEach((s, k) => { [[16 + 3 * k, s[0]], [17 + 3 * k, s[1]]].forEach(([c, v]) => { const a = XLSX.utils.encode_cell({ r: 11, c }); if (ws[a]) ws[a].v = v; }); });
   const noPin = cum.rows.filter(x => !x.e.pinfl).length;
   const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId && !S.rules.benId).length;
   if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (карточка сотрудника)"), 4200);
   sendFile("Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    XLSX.write(wb, { type: "base64", bookType: "xlsx" }));
+    window.fillTemplate(rows));
   if (noPin) setTimeout(() => toast("У " + noPin + " сотр. нет ПИНФЛ — допишите в файле или в приложении"), 1800);
 }
 function repText() {
