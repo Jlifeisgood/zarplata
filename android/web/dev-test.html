@@ -1,12 +1,13 @@
 <!doctype html><meta charset="utf-8"><title>calc tests</title>
 <pre id="o">running…</pre>
 <script src="calc.js"></script>
+<script src="hr.js"></script>
 <script>
 const { calc, DEFAULT_RULES } = window.Calc;
 const out = []; let fails = 0;
 function eq(a, b, m) { const ok = JSON.stringify(a) === JSON.stringify(b); if (!ok) { fails++; out.push("FAIL " + m + " got " + JSON.stringify(a) + " want " + JSON.stringify(b)); } }
 const R = DEFAULT_RULES;
-eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, exempt: 0, itExempt: 0, pit: 600000, inps: 5000, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
+eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, sick: 0, exempt: 0, itExempt: 0, pit: 600000, sickPit: 0, inps: 5000, sickInps: 0, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
 const o = calc({ amount: 5000000, mode: "gross", type: "trud" }, { ...R, inpsInsidePit: false });
 eq([o.net, o.pitBudget], [4395000, 600000], "outside");
 const g = calc({ amount: 1000000, mode: "gross", type: "gph" }, { ...R, inpsGph: false });
@@ -21,7 +22,16 @@ for (const inside of [true, false]) for (const type of ["trud", "gph"]) for (con
 }
 eq(calc({ amount: 1000000, mode: "gross", type: "trud" }, { ...R, budget: true }).esp, 250000, "budget");
 const IT = { ...R, itpark: true };
-eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, exempt: 0, itExempt: 3750000, pit: 750000, inps: 10000, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
+eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, sick: 0, exempt: 0, itExempt: 3750000, pit: 750000, sickPit: 0, inps: 10000, sickInps: 0, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
+// отпускные: как зарплата (ЕСП есть), больничные: НДФЛ и ИНПС, ЕСП нет
+const x1 = calc({ amount: 5000000, mode: "gross", type: "trud", extra: 1000000 }, R);
+eq([x1.gross, x1.pit, x1.esp, x1.net, x1.sick], [6000000, 720000, 720000, 5280000, 0], "отпускные");
+const x2 = calc({ amount: 5000000, mode: "gross", type: "trud", sick: 1000000 }, R);
+eq([x2.gross, x2.pit, x2.sickPit, x2.esp, x2.sick, x2.net], [6000000, 720000, 120000, 600000, 1000000, 5280000], "больничные без ЕСП");
+const x3 = calc({ amount: 4400000, mode: "net", type: "trud", extra: 1000000 }, R);
+eq(x3.gross, 6000000, "net-режим: extra сверху");
+const x4 = calc({ amount: 5000000, mode: "gross", type: "trud", sick: 2000000, benefit: 1.41 }, R);
+eq([x4.exempt, x4.sickPit, x4.pit], [1917600, 240000, 609888], "льгота ст. 380 сначала на зарплату");
 eq(calc({ amount: 1000000, mode: "gross", type: "gph" }, IT), calc({ amount: 1000000, mode: "gross", type: "gph" }, R), "itpark gph = обычные ставки");
 for (let net = 0; net < 20000000; net += 54321) { const r = calc({ amount: net, mode: "net", type: "trud" }, IT); if (r.net !== net) { eq(r.net, net, "itpark reverse " + net); break; } }
 // льгота ст. 380: 1,41 МРОТ = 1 917 600 не облагается
@@ -31,6 +41,23 @@ const b2 = calc({ amount: 1500000, mode: "gross", type: "trud", benefit: 1.41 },
 eq([b2.exempt, b2.pit, b2.net], [1500000, 0, 1500000], "ст.380: доход меньше лимита");
 const b3 = calc({ amount: 5000000, mode: "gross", type: "gph", benefit: 3 }, R);
 eq(b3.exempt, 0, "ст.380 не для ГПХ");
+// кадровые расчёты
+const HR = window.HR;
+// пример из kadry.uz: 03–23.07.2026, 21 день, 3 воскресенья, 6 000 000 → 6 000 000 / 25,3 × 18 = 4 268 775
+const v = HR.vacation({ start: "2026-07-03", days: 21, avg: 6000000 });
+eq([v.end, v.sun, v.hol, v.paid, v.pay], ["2026-07-23", 3, 0, 18, 4268775], "отпускные (пример)");
+// рабочих дней: октябрь 2026, 5-дневка = 22 − праздник 01.10 = 21, 6-дневка = 27 − 1 = 26
+eq([HR.workDays("2026-10", 5, []), HR.workDays("2026-10", 6, [])], [21, 26], "рабочие дни октября 2026");
+eq(HR.workDays("2026-10", 5, [], "2026-10-15", "2026-10-31"), 12, "рабочие дни с 15.10");
+// больничный: 10 дней, avg 6 000 000, стаж < 8 лет (60%): с 6-го дня платит фонд, воскресенья не считаются
+const s1 = HR.sick({ from: "2026-09-07", to: "2026-09-16", avg: 6000000, mrot: 1360000, long: false, bonus: false, prevDays: 0 });
+// 07.09 пн … 16.09 ср; воскресенье 13.09 пропускается; дни 1–5 работодатель, 6–10 фонд (день 7 — воскресенье)
+eq([s1.days, s1.empDays, s1.fundDays, s1.skipped], [10, 5, 4, 1], "больничный: дни");
+eq(s1.employer, Math.round(5 * 6000000 / 25.3 * 0.6), "больничный: работодатель");
+const s2 = HR.sick({ from: "2026-09-07", to: "2026-09-08", avg: 20000000, mrot: 1360000, long: true, bonus: true, prevDays: 0 });
+eq([s2.capped, s2.avgUsed, s2.base], [true, 13600000, 1], "больничный: предел 10 МРОТ и +20 п.п.");
+const s3 = HR.sick({ from: "2026-12-30", to: "2027-01-05", avg: 6000000, mrot: 1360000, long: false, prevDays: 300 });
+eq(s3.over > 0 || s3.empDays > 0, true, "больничный: сброс счётчика на новый год");
 eq(calc({ amount: "abc", mode: "net", type: "trud" }).gross, 0, "garbage");
 eq(calc({ amount: -5, mode: "gross", type: "trud" }).net, 0, "negative");
 document.getElementById("o").textContent = (fails ? out.join("\n") : "ALL OK (" + cnt + " reverse cases)");

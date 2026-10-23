@@ -50,7 +50,7 @@ const ICON = {
    список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
 const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES), emps: [], months: {} };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [] };
 }
 function normalize(s) {
   if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
@@ -58,6 +58,8 @@ function normalize(s) {
   if (s.rules.mrot === 1271000) s.rules.mrot = C.DEFAULT_RULES.mrot; // МРОТ вырос с 01.09.2026
   s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
   s.months = s.months || {};
+  s.events = s.events || [];                       // отпуска и больничные: { id, emp, type: 'vac'|'sick', from, to, payYm, amount, ... }
+  s.rules.holExtra = s.rules.holExtra || [];
   if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
   if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
     s.rv = 2; s.rules.inpsGph = true;
@@ -92,16 +94,41 @@ const coPrefix = () => (S.company.name || "").replace(/[^\p{L}\p{N}]+/gu, "_").r
 
 const rulesFor = ym => (S.months[ym] && S.months[ym].rules) || S.rules;
 const empActive = (e, ym) => e.from <= ym && (!e.to || ym <= e.to);
+/* Рабочие дни месяца по графику сотрудника: всего (W), отработано в рамках приёма/увольнения, не отработано из-за отпуска и больничного.
+   frac < 1 — неполный месяц: оклад начисляется пропорционально рабочим дням (ТК РУз), если сумму за месяц не задали вручную. */
+const empWd = e => (e.wd === 6 ? 6 : 5);
+const monthEnd = ym => ym + "-" + pad(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate());
+function dayInfo(e, ym) {
+  const wd = empWd(e), ex = S.rules.holExtra || [], ms = ym + "-01", me = monthEnd(ym);
+  const W = HR.workDays(ym, wd, ex);
+  const hire = e.hire || (e.from + "-01");
+  const from = hire > ms ? hire : ms, to = e.fire && e.fire < me ? e.fire : me;
+  const worked = from > to ? 0 : HR.workDays(ym, wd, ex, from, to);
+  let abs = 0;
+  (S.events || []).forEach(ev => {
+    if (ev.emp !== e.id) return;
+    const a = ev.from > from ? ev.from : from, b = ev.to < to ? ev.to : to;
+    if (a <= b) abs += HR.workDays(ym, wd, ex, a, b);
+  });
+  const frac = W ? Math.max(0, Math.min(1, (worked - abs) / W)) : 1;
+  return { W, worked, abs, frac };
+}
 function entryFor(e, ym) {
   const m = S.months[ym] && S.months[ym].e && S.months[ym].e[e.id];
+  const type = (m && m.type) || e.type;
+  const explicit = !!(m && !m.fz && m.amount != null);      // сумму за месяц ввели вручную — пропорцию не применяем
+  const base = m && m.amount != null ? m.amount : e.amount;
+  let amount = base, di = null;
+  if (!explicit && type !== "gph") { di = dayInfo(e, ym); if (di.frac < 1) amount = C.r0(base * di.frac); }
   return {
-    amount: m && m.amount != null ? m.amount : e.amount,
+    amount, base,
     mode: (m && m.mode) || e.mode,
-    type: (m && m.type) || e.type,
+    type,
     dept: (m && m.dept) || e.dept,
     ben: m && m.ben != null ? m.ben : (e.ben || ""),
     skip: !!(m && m.skip),
-    custom: !!m
+    custom: !!m && !m.fz,
+    day: di && di.frac < 1 ? di : null
   };
 }
 /* МРОТ на месяц: до 01.09.2026 действовал прежний (УП-91: 1 271 000), если пользователь не менял значение вручную */
@@ -128,16 +155,38 @@ function freezePast() {
     if (!m.rules) m.rules = Object.assign({}, S.rules);
     if (!m.e) m.e = {};
     S.emps.forEach(e => {
-      if (empActive(e, ym) && !m.e[e.id]) m.e[e.id] = { amount: e.amount, mode: e.mode, type: e.type, dept: e.dept, ben: e.ben || "" };
+      if (empActive(e, ym) && !m.e[e.id]) m.e[e.id] = { amount: e.amount, mode: e.mode, type: e.type, dept: e.dept, ben: e.ben || "", fz: true };
     });
   }
 }
-function calcEntry(e, ym) {
-  const en = entryFor(e, ym);
-  const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0 }, rulesEff(ym));
-  return { en, r };
+/* Отпускные (оплата труда) и больничные за счёт работодателя, начисленные в месяце ym */
+function evExtras(e, ym) {
+  let extra = 0, sick = 0;
+  (S.events || []).forEach(ev => { if (ev.emp === e.id && ev.payYm === ym) { if (ev.type === "vac") extra += ev.amount; else sick += ev.amount; } });
+  return { extra, sick };
 }
-const ZERO = () => ({ gross: 0, exempt: 0, itExempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
+function calcEntry(e, ym) {
+  const en = entryFor(e, ym), x = evExtras(e, ym);
+  const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0, extra: x.extra, sick: x.sick }, rulesEff(ym));
+  return { en, r, x };
+}
+/* Средняя месячная зарплата за 12 календарных месяцев перед месяцем startIso (ТК ст. 257): оплата труда без отпускных и пособий,
+   неполные месяцы — пропорционально отработанным дням. Нет истории — оклад по умолчанию. */
+function avgMonthly(e, startIso) {
+  const ym0 = startIso.slice(0, 7);
+  let tot = 0, eq = 0;
+  for (let i = 1; i <= 12; i++) {
+    const ym = addYm(ym0, -i);
+    if (!empActive(e, ym)) continue;
+    const { en, r, x } = calcEntry(e, ym), di = dayInfo(e, ym);
+    if (en.skip || !di.worked) continue;
+    tot += r.gross - x.extra - x.sick;
+    eq += di.W ? Math.max(0, di.worked - di.abs) / di.W : 1;
+  }
+  if (eq > 0 && tot > 0) return C.r0(tot / eq);
+  return C.calc({ amount: e.amount, mode: e.mode, type: e.type }, rulesEff(ym0)).gross;
+}
+const ZERO = () => ({ gross: 0, sick: 0, sickPit: 0, sickInps: 0, exempt: 0, itExempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
 const KEYS = Object.keys(ZERO());
 function addTo(t, r) { KEYS.forEach(k => { t[k] += r[k] || 0; }); return t; }
 function sumList(list) { const t = ZERO(); list.forEach(r => addTo(t, r)); return t; }
@@ -166,10 +215,16 @@ window.handleBack = () => {
 function confirmBox(msg) { return window.confirm(msg); }
 
 /* ---------- общие блоки ---------- */
-function breakdown(r, rules, type) {
+function breakdown(r, rules, type, x) {
   const inside = rules.inpsInsidePit;
   const rt = C.rates(rules, type), espR = rt.esp;
+  x = x || { extra: 0, sick: 0 };
   let h = '<div class="calc">';
+  if (x.extra || x.sick) {
+    h += '<div class="l"><span>Оплата труда за месяц</span><span class="num">' + fmt(r.gross - x.extra - x.sick) + '</span></div>';
+    if (x.extra) h += '<div class="l"><span>Отпускные</span><span class="num">' + fmt(x.extra) + '</span></div>';
+    if (x.sick) h += '<div class="l"><span>Больничный (за счёт работодателя)</span><span class="num">' + fmt(x.sick) + '</span></div>';
+  }
   h += '<div class="l"><span>Начислено</span><b class="num">' + fmt(r.gross) + '</b></div>';
   if (r.exempt > 0) h += '<div class="l"><span>Не облагается (ст. 380 НК)</span><span class="num">' + fmt(r.exempt) + '</span></div>';
   h += '<div class="l"><span>НДФЛ ' + pct(rt.pit) + (rules.itpark && type !== "gph" ? " (IT Park)" : "") + '</span><span class="num">− ' + fmt(r.pit) + '</span></div>';
@@ -224,15 +279,16 @@ function welcome() {
 
 /* ---------- вкладка «Зарплата» ---------- */
 function monthRows(ym) {
-  return S.emps.filter(e => empActive(e, ym)).map(e => { const x = calcEntry(e, ym); return { e, en: x.en, r: x.r }; })
+  return S.emps.filter(e => empActive(e, ym)).map(e => { const c = calcEntry(e, ym); return { e, en: c.en, r: c.r, x: c.x }; })
     .sort((a, b) => (a.en.dept === b.en.dept ? 0 : a.en.dept === "aup" ? -1 : 1) || a.e.last.localeCompare(b.e.last, "ru"));
 }
 function payItem(x) {
   const { e, en, r } = x;
   const t = en.type === "gph" ? '<span class="badge warn">ГПХ</span>' : "";
-  const sub = en.skip ? "не начисляется в этом месяце" : (e.pos ? esc(e.pos) + " · " : "") + "начислено " + fmt(r.gross);
+  const part = en.day ? "неполный месяц: " + Math.max(0, en.day.worked - en.day.abs) + " из " + en.day.W + " раб. дн." : "";
+  const sub = en.skip ? "не начисляется в этом месяце" : (part || (e.pos ? esc(e.pos) + " · " : "") + "начислено " + fmt(r.gross)) + (x.x.extra ? " · отпускные" : "") + (x.x.sick ? " · больничный" : "");
   return '<button class="item ' + (en.skip ? "off" : "") + '" data-act="openPay" data-id="' + e.id + '"><div class="av ' + (S.company.split ? en.dept : "") + '">' + esc(initials(e)) + '</div>' +
-    '<div class="grow"><div class="nm">' + esc(shortName(e)) + t + (en.custom && !en.skip ? '<span class="badge">изменено</span>' : "") + '</div><div class="sb">' + sub + '</div></div>' +
+    '<div class="grow"><div class="nm">' + esc(shortName(e)) + t + (en.custom && !en.skip ? '<span class="badge">изменено</span>' : en.day && !en.skip ? '<span class="badge warn">неполный</span>' : "") + '</div><div class="sb">' + sub + '</div></div>' +
     '<div class="r"><b class="num">' + (en.skip ? "—" : fmt(r.net)) + '</b><span>на руки</span></div></button>';
 }
 function viewPay() {
@@ -276,8 +332,10 @@ function openPay(id) {
     seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки"]]) +
     '<div style="height:12px"></div><label class="f"><span>' + (D.mode === "net" ? "Сумма на руки" : "Сумма начисления") + '</span><input class="in amt" id="f-amt" inputmode="numeric" value="' + (en.amount ? fmt(en.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
+    (en.day ? '<div class="hint">Неполный месяц: оклад пересчитан на ' + Math.max(0, en.day.worked - en.day.abs) + ' из ' + en.day.W + ' рабочих дней (по графику ' + empWd(e) + '-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.</div>' : "") +
     '<div class="btns"><button class="btn" data-act="savePay">Сохранить</button></div>' +
     '<div class="btns"><button class="btn sec2" data-act="slip">' + ICON.share + 'Расчётный листок</button></div>' +
+    evBlock(e) +
     '<div class="btns">' + '<button class="btn ghost" data-act="skipPay">' + (en.skip ? "Начислять в этом месяце" : "Не начислять в этом месяце") + '</button>' +
     (en.custom ? '<button class="btn ghost" data-act="resetPay">Вернуть стандартную</button>' : "") + '</div>');
   updPreview();
@@ -287,11 +345,12 @@ function updPreview() {
   const el = $("#prev"); if (!el || !D) return;
   const amt = parseAmt($("#f-amt").value);
   let type, ben, rules, hint = "";
-  if (D.kind === "pay") { const e = curDraftEmp(), en = entryFor(e, ui.ym); type = en.type; ben = en.ben; rules = rulesEff(ui.ym); }
+  let x = { extra: 0, sick: 0 };
+  if (D.kind === "pay") { const e = curDraftEmp(), en = entryFor(e, ui.ym); type = en.type; ben = en.ben; rules = rulesEff(ui.ym); x = evExtras(e, ui.ym); }
   else { type = D.type; ben = $("#f-ben") ? $("#f-ben").value : ""; rules = rulesEff(curYm()); }
-  const r = C.calc({ amount: amt, mode: D.mode, type, benefit: Number(ben) || 0 }, rules);
-  if (amt > 0 && type === "trud" && r.gross < rules.mrot) hint = '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
-  el.innerHTML = amt > 0 ? breakdown(r, rules, type) + hint : '<div class="hint">Введите сумму — ниже появится расчёт.</div>';
+  const r = C.calc({ amount: amt, mode: D.mode, type, benefit: Number(ben) || 0, extra: x.extra, sick: x.sick }, rules);
+  if (amt > 0 && type === "trud" && r.gross - x.extra - x.sick < rules.mrot && !(D.kind === "pay" && entryFor(curDraftEmp(), ui.ym).day)) hint = '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
+  el.innerHTML = amt > 0 ? breakdown(r, rules, type, x) + hint : '<div class="hint">Введите сумму — ниже появится расчёт.</div>';
 }
 function savePay() {
   const e = curDraftEmp(), amt = parseAmt($("#f-amt").value);
@@ -300,16 +359,106 @@ function savePay() {
   const m = S.months[ui.ym] || (S.months[ui.ym] = {});
   m.e = m.e || {};
   const base = entryFor(e, ui.ym);
+  if (!base.custom && amt === base.amount && D.mode === base.mode && !D.skip) { closeSheet(); return; }   // ничего не меняли — пропорция остаётся
   m.e[e.id] = { amount: amt || base.amount, mode: D.mode, type: base.type, dept: base.dept, ben: base.ben, skip: D.skip || undefined };
   save(); closeSheet(); render(); toast("Сохранено");
 }
 function payslip(e) {
-  const { en, r } = calcEntry(e, ui.ym), R = rulesEff(ui.ym);
-  const L = ["Расчётный листок", S.company.name ? "Компания: " + S.company.name : "", "Сотрудник: " + fullName(e), "Период: " + ymLabel(ui.ym), "",
-    "Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(C.rates(R, en.type).pit) + ": " + fmt(r.pit) + " сум"];
+  const { en, r, x } = calcEntry(e, ui.ym), R = rulesEff(ui.ym);
+  const L = ["Расчётный листок", S.company.name ? "Компания: " + S.company.name : "", "Сотрудник: " + fullName(e), "Период: " + ymLabel(ui.ym), ""];
+  if (x.extra || x.sick) {
+    L.push("Оплата труда: " + fmt(r.gross - x.extra - x.sick) + " сум");
+    if (x.extra) L.push("Отпускные: " + fmt(x.extra) + " сум");
+    if (x.sick) L.push("Больничный (за счёт работодателя): " + fmt(x.sick) + " сум");
+  }
+  L.push("Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(C.rates(R, en.type).pit) + ": " + fmt(r.pit) + " сум");
   if (r.inps) L.push("ИНПС " + pct(R.inps) + (R.inpsInsidePit ? " (входит в НДФЛ)" : "") + ": " + fmt(r.inps) + " сум");
   L.push("К выплате на руки: " + fmt(r.net) + " сум");
   return L.filter(x => x !== "" || true).join("\n");
+}
+
+/* ---------- отпуска и больничные ---------- */
+const evTitle = ev => (ev.type === "vac" ? "Отпуск " : "Больничный ") + isoToDmy(ev.from) + " – " + isoToDmy(ev.to);
+function evBlock(e) {
+  const ms = ui.ym + "-01", me = monthEnd(ui.ym);
+  const list = (S.events || []).filter(ev => ev.emp === e.id && ((ev.from <= me && ev.to >= ms) || ev.payYm === ui.ym));
+  let h = '<div class="sec" style="margin-top:18px">Отпуск и больничный</div>';
+  if (list.length) h += '<div class="card">' + list.map(ev => '<div class="item"><div class="grow"><div class="nm">' + esc(evTitle(ev)) + '</div><div class="sb">' +
+    (ev.type === "vac" ? "отпускные " : "за счёт работодателя ") + fmt(ev.amount) + " · начислено в " + esc(ymLabel(ev.payYm)) + '</div></div>' +
+    '<button class="ib" data-act="delEv" data-id="' + ev.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + "</div>";
+  if (entryFor(e, ui.ym).type === "gph") return h + '<div class="hint">Для договора ГПХ отпуск и больничный не начисляются.</div>';
+  return h + '<div class="btns"><button class="btn sec2" data-act="vac">Отпускные…</button><button class="btn sec2" data-act="sick">Больничный…</button></div>';
+}
+function openVac() {
+  const e = curDraftEmp(); if (!e) return;
+  const start = ui.ym === curYm() ? todayIso() : ui.ym + "-01";
+  D = { kind: "vac", id: e.id, avgTouched: false, avgYm: start.slice(0, 7) };
+  openSheet('<h2>Отпускные</h2><p class="sub">' + esc(fullName(e)) + '</p>' +
+    dateField("v-start", start, "Первый день отпуска") +
+    '<label class="f"><span>Календарных дней отпуска</span><input class="in" id="v-days" inputmode="numeric" value="21" autocomplete="off"></label>' +
+    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="v-avg" inputmode="numeric" value="' + fmt(avgMonthly(e, start)) + '" autocomplete="off"></label>' +
+    '<div class="hint">Посчитана за 12 месяцев до месяца отпуска из начислений в приложении (ТК, ст. 257); можно изменить.</div>' +
+    '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveVac">Добавить в начисления</button></div>');
+  updHr();
+}
+function prevSickDays(e, from) { // календарных дней больничных в том же году до этого листка
+  const y = from.slice(0, 4); let n = 0;
+  (S.events || []).forEach(ev => {
+    if (ev.emp !== e.id || ev.type !== "sick" || ev.to >= from) return;
+    const a = ev.from > y + "-01-01" ? ev.from : y + "-01-01", b = ev.to < y + "-12-31" ? ev.to : y + "-12-31";
+    if (a <= b) n += Math.round((new Date(b) - new Date(a)) / 86400000) + 1;
+  });
+  return n;
+}
+function openSick() {
+  const e = curDraftEmp(); if (!e) return;
+  const d = ui.ym === curYm() ? todayIso() : ui.ym + "-01";
+  D = { kind: "sick", id: e.id, long: "0", bonus: false, avgTouched: false, avgYm: d.slice(0, 7) };
+  openSheet('<h2>Больничный</h2><p class="sub">' + esc(fullName(e)) + '</p>' +
+    '<div class="two">' + dateField("s-from", d, "Начало листка") + dateField("s-to", d, "Конец листка") + '</div>' +
+    '<div class="f"><span>Страховой стаж</span>' + seg("long", D.long, [["0", "6 мес – 8 лет (60%)"], ["1", "Более 8 лет (80%)"]]) + '</div>' +
+    sw("swd", "bonus", false, "+20 п.п. к коэффициенту", "Инвалид I–II группы, 4+ детей до 18 лет или ребёнок-инвалид в семье") +
+    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="s-avg" inputmode="numeric" value="' + fmt(avgMonthly(e, d)) + '" autocomplete="off"></label>' +
+    '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveSick">Добавить в начисления</button></div>');
+  updHr();
+}
+function updHr() {
+  const el = $("#hr-prev"); if (!el || !D || (D.kind !== "vac" && D.kind !== "sick")) return;
+  const e = curDraftEmp(), ex = S.rules.holExtra || [], line = (a, b, t) => '<div class="l' + (t ? " t" : "") + '"><span>' + a + '</span><span class="num">' + b + '</span></div>';
+  D.res = null;
+  if (D.kind === "vac") {
+    const start = parseDmy($("#v-start").value), days = parseAmt($("#v-days").value);
+    if (start && !D.avgTouched && D.avgYm !== start.slice(0, 7)) { D.avgYm = start.slice(0, 7); $("#v-avg").value = fmt(avgMonthly(e, start)); }
+    const avg = parseAmt($("#v-avg").value);
+    if (!start || !(days > 0) || !(avg > 0)) { el.innerHTML = '<div class="hint">Укажите дату начала, дни и среднюю зарплату.</div>'; return; }
+    const v = HR.vacation({ start, days, avg, extra: ex });
+    D.res = { start, v, avg };
+    el.innerHTML = '<div class="calc">' + line("Отпуск", isoToDmy(start) + " – " + isoToDmy(v.end)) + line("Воскресенья (не оплачиваются)", v.sun) + line("Праздничные дни (не оплачиваются)", v.hol) +
+      line("Оплачиваемых дней", v.paid) + line("Средний дневной заработок (÷ 25,3)", fmt(v.daily)) + line("Отпускные", fmt(v.pay), 1) + '</div>' +
+      '<div class="hint">Начислятся в ' + esc(ymLabel(start.slice(0, 7)).toLowerCase()) + ' (НДФЛ, ИНПС и соцналог — как с зарплаты); оклад за дни отпуска в месяце уменьшится сам.</div>';
+    return;
+  }
+  const from = parseDmy($("#s-from").value), to = parseDmy($("#s-to").value);
+  if (from && !D.avgTouched && D.avgYm !== from.slice(0, 7)) { D.avgYm = from.slice(0, 7); $("#s-avg").value = fmt(avgMonthly(e, from)); }
+  const avg = parseAmt($("#s-avg").value);
+  if (!from || !to || to < from || !(avg > 0)) { el.innerHTML = '<div class="hint">Укажите даты листка (дд.мм.гггг) и среднюю зарплату.</div>'; return; }
+  if (from < "2026-07-01") { el.innerHTML = '<div class="alert warn">Новый порядок больничных действует с 01.07.2026. За более ранние даты расчёт здесь не ведётся.</div>'; return; }
+  const rules = rulesEff(from.slice(0, 7));
+  const s = HR.sick({ from, to, avg, mrot: rules.mrot, long: D.long === "1", bonus: !!D.bonus, prevDays: prevSickDays(e, from), extra: ex });
+  D.res = { from, to, s, avg };
+  el.innerHTML = '<div class="calc">' + line("Листок", s.days + " дн.") + line("Коэффициент стажа", Math.round(s.base * 100) + "%") +
+    line("Средняя зарплата в расчёте" + (s.capped ? " (предел 10 МРОТ)" : ""), fmt(s.avgUsed)) +
+    line("Пособие за весь период", fmt(s.total)) + line("За счёт работодателя (" + s.empDays + " дн.)", fmt(s.employer), 1) + line("За счёт Фонда соцстрахования (" + s.fundDays + " дн.)", fmt(s.fund)) + '</div>' +
+    '<div class="hint">Воскресенья и праздники не оплачиваются (' + s.skipped + ' дн.). Первые 5 календарных дней в году платит работодатель, дальше — Фонд напрямую сотруднику. Свыше 77 дней в году коэффициент меньше на 10 п.п., оплата — не более 182 дней в году.</div>' +
+    '<div class="hint">Часть работодателя начислится в ' + esc(ymLabel(to.slice(0, 7)).toLowerCase()) + ': НДФЛ и ИНПС — да, соцналог — нет. В приложение 4 она не попадает (это не оплата труда) — отразите отдельно.</div>';
+}
+function saveEvent() {
+  if (!D || !D.res) { toast("Заполните поля"); return; }
+  const id = D.id, ev = D.kind === "vac"
+    ? { id: uid(), emp: id, type: "vac", from: D.res.start, to: D.res.v.end, payYm: D.res.start.slice(0, 7), amount: D.res.v.pay, avg: D.res.avg }
+    : { id: uid(), emp: id, type: "sick", from: D.res.from, to: D.res.to, payYm: D.res.to.slice(0, 7), amount: D.res.s.employer, total: D.res.s.total, avg: D.res.avg };
+  S.events.push(ev); save(); render();
+  ui.ym = ev.type === "vac" ? ui.ym : ui.ym; openPay(id); toast("Добавлено в начисления");
 }
 
 /* ---------- вкладка «Сотрудники» ---------- */
@@ -718,11 +867,11 @@ const ACT = {
     const l = $("#amt-l");
     if (l) l.textContent = (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + " *";
     if (D.kind === "pay") { const f = document.querySelector("#sheet .f>span"); if (f) f.textContent = D.mode === "net" ? "Сумма на руки" : "Сумма начисления"; }
-    updPreview();
+    updPreview(); updHr();
   },
   swd: t => { // переключатель в черновике
     const k = t.dataset.k; D = D || {};
-    D[k] = !D[k]; t.classList.toggle("on", D[k]);
+    D[k] = !D[k]; t.classList.toggle("on", D[k]); updHr();
   },
   swc: t => { S.company[t.dataset.k] = !S.company[t.dataset.k]; save(); render(); },
   swr: t => { if (t.dataset.k !== "itpark") freezePast(); S.rules[t.dataset.k] = !S.rules[t.dataset.k]; save(); render(); },
@@ -736,9 +885,15 @@ const ACT = {
     const e = curDraftEmp(), m = S.months[ui.ym] || (S.months[ui.ym] = {}), b = entryFor(e, ui.ym);
     m.e = m.e || {};
     const skip = !b.skip;
-    if (!skip && b.amount === e.amount && b.mode === e.mode && b.type === e.type && b.dept === e.dept) delete m.e[e.id];
-    else m.e[e.id] = { amount: b.amount, mode: b.mode, type: b.type, dept: b.dept, ben: b.ben, skip: skip || undefined };
+    if (!skip && !b.custom && b.base === e.amount && b.mode === e.mode && b.type === e.type && b.dept === e.dept && (b.ben || "") === (e.ben || "")) delete m.e[e.id];
+    else m.e[e.id] = { amount: b.base, mode: b.mode, type: b.type, dept: b.dept, ben: b.ben, skip: skip || undefined, fz: b.custom ? undefined : true };
     save(); closeSheet(); render();
+  },
+  vac: openVac, sick: openSick, saveVac: saveEvent, saveSick: saveEvent,
+  delEv: t => {
+    if (!confirmBox("Удалить эту запись об отпуске/больничном из начислений?")) return;
+    const id = D && D.id;
+    S.events = S.events.filter(ev => ev.id !== t.dataset.id); save(); render(); if (id) openPay(id);
   },
   resetPay: () => { const m = S.months[ui.ym]; if (m && m.e) delete m.e[D.id]; save(); closeSheet(); render(); toast("Возвращена стандартная сумма"); },
   slip: () => { const e = curDraftEmp(); if (e) shareText("Расчётный листок", payslip(e)); },
@@ -746,6 +901,7 @@ const ACT = {
     const e = S.emps.find(x => x.id === D.id);
     if (!confirmBox("Удалить «" + fullName(e) + "» вместе с историей начислений? Для увольнения лучше указать «Последний месяц».")) return;
     S.emps = S.emps.filter(x => x.id !== e.id);
+    S.events = (S.events || []).filter(ev => ev.emp !== e.id);
     Object.values(S.months).forEach(m => { if (m.e) delete m.e[e.id]; });
     save(); closeSheet(); render(); toast("Удалено");
   },
@@ -783,6 +939,8 @@ function applyItDate(el) {
 document.addEventListener("input", ev => {
   const el = ev.target;
   if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
+  if (el.id === "v-days" || el.id === "v-avg" || el.id === "s-avg") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; if (el.id !== "v-days") D.avgTouched = true; }
+  if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
   if (el.id === "f-amt") {
     const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; el.classList.remove("bad"); updPreview();
   } else if (el.id === "f-ben") updPreview();

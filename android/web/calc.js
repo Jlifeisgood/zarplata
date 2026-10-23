@@ -16,7 +16,8 @@
     espIt: 0,           // соцналог резидента IT Park, %
     benId: '',          // ID льготы НДФЛ по ст. 380 в кабинете my.soliq.uz (графа «Номер льготы» приложения 4), вводит пользователь
     benIdIt: '103847',  // ID льготы НДФЛ резидента IT Park в кабинете my.soliq.uz (дал пользователь)
-    mrot: 1360000       // МРОТ с 01.09.2026 (УП-115 от 23.06.2026): подсказка и льгота ст. 380
+    holExtra: [],       // дополнительные нерабочие праздничные дни (ГГГГ-ММ-ДД), например дни Хайита — по постановлению
+    mrot: 1360000       // МРОТ с 01.09.2026 (УП-115 от 23.06.2026): подсказка, льгота ст. 380, предел для больничных
   };
 
   function r0(x) { return Math.round(x + 1e-9); }
@@ -29,8 +30,11 @@
   }
 
   /**
-   * o: { amount, mode: 'gross'|'net', type: 'trud'|'gph', benefit: 0 | 1.41 | 3 }
+   * o: { amount, mode: 'gross'|'net', type: 'trud'|'gph', benefit: 0 | 1.41 | 3, extra, sick }
    * benefit — льгота ст. 380 НК: из дохода месяца не облагается benefit × МРОТ (только трудовой договор).
+   * extra — доп. оплата труда за месяц (отпускные и т. п.): НДФЛ, ИНПС и соцналог как с зарплаты (ст. 374 НК).
+   * sick  — пособие по временной нетрудоспособности за счёт работодателя: НДФЛ и ИНПС, без соцналога (ст. 369 п. 7, ст. 371, 404 НК).
+   * Режим «на руки» (net) относится только к основной сумме; extra и sick добавляются сверху по начисленному.
    * Возвращает суммы в целых сумах.
    */
   function calc(o, rules) {
@@ -41,29 +45,37 @@
     var espRate = rt.esp / 100;
     var outside = !R.inpsInsidePit;
     var amount = Math.max(0, Number(o.amount) || 0);
+    var extra = Math.max(0, r0(Number(o.extra) || 0)), sick = Math.max(0, r0(Number(o.sick) || 0));
     var E = (o.type !== 'gph' && Number(o.benefit) > 0) ? r0(Number(o.benefit) * R.mrot) : 0; // необлагаемая часть
     function taxable(g) { return Math.max(0, g - E); }
     function netOf(g) { var t = taxable(g); return g - r0(t * pit) - (outside ? r0(t * inpsRate) : 0); }
-    var gross;
+    var base;
     if (o.mode === 'net') {
       var k = pit + (outside ? inpsRate : 0);
-      gross = amount <= E ? r0(amount) : r0((amount - k * E) / (1 - k));
+      base = amount <= E ? r0(amount) : r0((amount - k * E) / (1 - k));
       // подгоняем до сума: на руки должно получиться ровно введённое
-      for (var i = 0; i < 6 && netOf(gross) < amount; i++) gross++;
-      for (var j = 0; j < 6 && gross > 0 && netOf(gross - 1) >= amount; j++) gross--;
-    } else gross = r0(amount);
+      for (var i = 0; i < 6 && netOf(base) < amount; i++) base++;
+      for (var j = 0; j < 6 && base > 0 && netOf(base - 1) >= amount; j++) base--;
+    } else base = r0(amount);
+    var gross = base + extra + sick;
     var t = taxable(gross);
     var pitAmt = r0(t * pit);
     var inpsAmt = r0(t * inpsRate);
-    var esp = r0(gross * espRate);
+    var esp = r0((base + extra) * espRate);
+    // доля налога, приходящаяся на пособие: льгота сначала уменьшает оплату труда
+    var laborTaxable = taxable(base + extra), sickTaxable = t - laborTaxable;
+    var sickPit = r0(sickTaxable * pit), sickInps = r0(sickTaxable * inpsRate);
     // IT Park: льготная ставка в отчёте выражается «необлагаемой» долей дохода: налог по полной ставке с остатка = налог по ставке IT Park
-    var itEx = (R.itpark && o.type !== 'gph' && R.pit > 0) ? t - r0(t * R.pitIt / R.pit) : 0;
+    var itEx = (R.itpark && o.type !== 'gph' && R.pit > 0) ? laborTaxable - r0(laborTaxable * R.pitIt / R.pit) : 0;
     return {
       gross: gross,
+      sick: sick,                                    // из начисленного: пособие по ВН (не оплата труда)
       exempt: gross - t,                             // не облагаемая налогом часть (ст. 380)
       itExempt: itEx,                                // доля дохода, не облагаемая «по полной ставке» из-за льготы IT Park
       pit: pitAmt,                                   // НДФЛ начислено
+      sickPit: sickPit,                              // из них с пособия
       inps: inpsAmt,                                 // ИНПС
+      sickInps: sickInps,
       pitBudget: outside ? pitAmt : pitAmt - inpsAmt,// НДФЛ к уплате в бюджет
       esp: esp,
       net: gross - pitAmt - (outside ? inpsAmt : 0), // на руки
