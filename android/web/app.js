@@ -296,7 +296,7 @@ function viewPay() {
   let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + coChip() + '</div></div><div class="page">';
   h += '<div class="month"><button class="ib" data-act="ym" data-d="-1" aria-label="Предыдущий месяц">' + ICON.left + '</button><div class="m">' + ymLabel(ym) +
     (ym === curYm() ? "<small>текущий месяц</small>" : "") + '</div><button class="ib" data-act="ym" data-d="1" aria-label="Следующий месяц">' + ICON.right + '</button></div>';
-  h += yearNote(ym);
+  h += yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
   if (!S.emps.length) {
     return h + empty(ICON.team, "Пока никого нет", "Добавьте сотрудника — укажите ФИО и начисление, остальное посчитается само.",
       '<button class="btn" data-act="newEmp">' + ICON.plus + 'Добавить сотрудника</button>') + "</div>";
@@ -323,6 +323,18 @@ function viewPay() {
   } else h += '<div class="card">' + list.map(payItem).join("") + "</div>";
   return h + "</div>";
 }
+
+/* Срок отчёта по НДФЛ и соцналогу — 15 число следующего месяца (ст. 389, 407 НК); за год — 15 февраля. Подсказка за 7 дней до срока. */
+function deadlineNote() {
+  const now = new Date(), today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const due = new Date(now.getFullYear(), now.getMonth() + (now.getDate() > 15 ? 1 : 0), 15);
+  const days = Math.round((due - today) / 864e5);
+  if (days > 7) return "";
+  const rep = new Date(due.getFullYear(), due.getMonth() - 1, 1);
+  const yearly = due.getMonth() === 1 ? " Годовой отчёт за " + (due.getFullYear() - 1) + " год — тоже до 15 февраля." : "";
+  return '<div class="alert warn">' + (days === 0 ? "Сегодня последний день: " : "Осталось " + days + " дн.: ") + "отчёт по НДФЛ и соцналогу за " + MONTHS[rep.getMonth()].toLowerCase() + " " + rep.getFullYear() + " и уплата (до 15 числа)." + yearly + "</div>";
+}
+const remOn = () => ui.rem !== undefined ? ui.rem : (A && A.remindersOn ? A.remindersOn() : (() => { try { return localStorage.getItem("zarplata.rem") === "1"; } catch (e) { return false; } })());
 
 function openPay(id) {
   const e = S.emps.find(x => x.id === id); if (!e) return;
@@ -492,8 +504,8 @@ function viewTeam() {
 }
 function openEmp(id) {
   const e = id ? S.emps.find(x => x.id === id) : null;
-  D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, res: e.res || "1", ck: e.ck || "1", touchedMode: true }
-        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", ck: "1", touchedMode: false };
+  D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, res: e.res || "1", ck: e.ck || "1", wd: String(e.wd || 5), touchedMode: true }
+        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", ck: "1", wd: "5", touchedMode: false };
   const v = e || { last: "", first: "", mid: "", pinfl: "", pos: "", amount: 0, from: ui.ym, to: "" };
   openSheet('<h2>' + (e ? "Сотрудник" : "Новый сотрудник") + '</h2><p class="sub">' + (e ? "Изменения суммы действуют с текущего месяца, прошлые месяцы не пересчитываются." : "Заполните основное — остальное можно добавить позже.") + '</p>' +
     '<label class="f"><span>Фамилия *</span><input class="in" id="f-last" value="' + esc(v.last) + '" autocomplete="off"></label>' +
@@ -514,6 +526,7 @@ function openEmp(id) {
     dateField("f-to", v.fire || (v.to ? v.to + "-" + pad(new Date(+v.to.slice(0, 4), +v.to.slice(5), 0).getDate()) : ""), "Дата увольнения") + '</div>' +
     (e ? '<div class="hint">Дату увольнения заполняйте, когда сотрудник уходит — начисления будут по месяц увольнения включительно.</div>' : "") +
     '<details class="more"><summary>Для отчёта в налоговую</summary><div class="f"><span>Статус</span>' + seg("res", D.res, [["1", "Резидент"], ["2", "Нерезидент"]]) + '</div>' +
+    '<div class="f"><span>График работы (для неполного месяца, отпуска, больничного)</span>' + seg("wd", D.wd, [["5", "5-дневная неделя"], ["6", "6-дневная неделя"]]) + '</div>' +
     '<div class="f"><span>Форма контракта (для трудовых)</span>' + seg("ck", D.ck, [["1", "Основной"], ["2", "Совместитель"], ["5", "Надомник"]]) + '</div>' +
     '<label class="f"><span>Рабочее время, ставок (1; 0,5; 0,25…)</span><input class="in" id="f-rate" inputmode="decimal" value="' + String(v.rate || 1).replace(".", ",") + '"></label>' +
     '<label class="f"><span>Рабочее место</span><select class="in" id="f-seat">' +
@@ -539,7 +552,7 @@ function saveEmp() {
   const from = hire.slice(0, 7), to = fire ? fire.slice(0, 7) : "";
   if (fire && fire < hire) { toast("Дата увольнения раньше даты принятия"); return; }
   const rate = Number(g("f-rate").replace(",", ".")) || 1;
-  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to, fire, res: D.res, rate,
+  const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to, fire, res: D.res, rate, wd: Number(D.wd) === 6 ? 6 : 5,
     ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
@@ -667,10 +680,10 @@ function exportSoliq() {
   // дата создания рабочего места: введённая вручную, иначе дата принятия; всё, что раньше 2025 года, — 01.01.2025 (требование шаблона)
   const created = e => { const d = e.wp || e.hire || e.from + "-01"; return d >= "2025-01-01" ? d.split("-").reverse().join(".") : "01.01.2025"; };
   // льготы: каждая занимает тройку граф (номер льготы, совокупный необлагаемый доход, в т.ч. за период), начиная с графы 15 (P)
-  const rows = cum.rows.map((x, i) => {
+  const rows = cum.rows.filter(x => x.gross - x.sick > 0).map((x, i) => {
     const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph";
     const row = [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
-      gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross, m.gross, x.pit, m.pit];
+      gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross - x.sick, m.gross - m.sick, x.pit - x.sickPit, m.pit - m.sickPit];   // пособие по ВН — не оплата труда, в приложение 4 не входит
     const slots = [];
     if (!gph && x.itExempt > 0) slots.push([S.rules.benIdIt || null, x.itExempt, m.itExempt]);
     if (!gph && x.exempt > 0) slots.push([e.benId || S.rules.benId || null, x.exempt, m.exempt]);
@@ -705,6 +718,7 @@ function viewSet() {
       '<div class="hint">Льгота считается по месяцам: если дата — 1-е число, то с этого месяца, иначе со следующего (льготы действуют с 1-го числа месяца, следующего за включением в реестр). Пусто — льгота для всех месяцев.</div>' : "");
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
+  h += '<div class="sec">Напоминания</div>' + sw("rem", "rem", remOn(), "О сроках отчёта", "12 и 15 числа в 09:00: НДФЛ и соцналог — до 15 числа, годовой отчёт — до 15 февраля");
   h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
     '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
@@ -722,6 +736,8 @@ function openRates() {
     '<div class="two">' + f("r-pit", "НДФЛ, %", R.pit) + f("r-inps", "ИНПС, %", R.inps) + '</div><div class="two">' + f("r-esp", "ЕСП, %", R.esp) + f("r-espb", "ЕСП бюджет, %", R.espBudget) + '</div>' +
     '<div class="sec" style="margin-top:4px">Резидент IT Park (трудовые договоры)</div><div class="two">' + f("r-pitit", "НДФЛ, %", R.pitIt) + f("r-espit", "ЕСП, %", R.espIt) + '</div>' +
     f("r-mrot", "МРОТ, сум (для подсказки и льготы ст. 380)", R.mrot) +
+    '<label class="f"><span>Доп. праздничные дни (дд.мм.гггг через запятую)</span><input class="in" id="r-hol" value="' + esc((R.holExtra || []).map(isoToDmy).join(", ")) + '" placeholder="например, дни Хайита по постановлению" autocomplete="off"></label>' +
+    '<div class="hint">Уже учтены 1 января, 8 марта, 21 марта, 9 мая, 1 сентября, 1 октября, 8 декабря. Дни Хайита и переносы добавьте здесь — они не считаются рабочими.</div>' +
     '<label class="f"><span>ID льготы НДФЛ: IT Park (для файла в кабинет)</span><input class="in" id="r-benidit" value="' + esc(R.benIdIt || "") + '"></label>' +
     '<label class="f"><span>ID льготы НДФЛ: ст. 380 по умолчанию (если не указан у сотрудника)</span><input class="in" id="r-benid" value="' + esc(R.benId || "") + '"></label>' +
     sw("swd", "inside", D.inside, "ИНПС входит в НДФЛ", "На руки = начислено − НДФЛ. Выключите, если ИНПС удерживается сверху НДФЛ") +
@@ -732,8 +748,10 @@ function saveRates() {
   const n = id => Number(String($("#" + id).value).replace(",", ".").replace(/\s/g, ""));
   const v = { pit: n("r-pit"), inps: n("r-inps"), esp: n("r-esp"), espBudget: n("r-espb"), pitIt: n("r-pitit"), espIt: n("r-espit"), mrot: n("r-mrot") };
   if (Object.values(v).some(x => !isFinite(x) || x < 0) || v.pit >= 100 || v.pitIt >= 100) { toast("Проверьте числа"); return; }
+  const hol = $("#r-hol").value.split(/[,;\s]+/).filter(Boolean).map(parseDmy);
+  if (hol.some(x => !x)) { toast("Праздничные дни: дд.мм.гггг через запятую"); return; }
   freezePast();
-  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim(), benIdIt: $("#r-benidit").value.trim() });
+  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim(), benIdIt: $("#r-benidit").value.trim(), holExtra: [...new Set(hol)].sort() });
   save(); closeSheet(); render(); toast("Ставки сохранены");
 }
 
@@ -913,6 +931,11 @@ const ACT = {
   rates: openRates, saveRates,
   resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark, f = S.rules.itFrom, t = S.rules.itTo; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it, itFrom: f, itTo: t }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
   backup, restore: () => $("#restore-file").click(),
+  rem: () => {
+    const on = !remOn(); ui.rem = on;
+    if (A && A.setReminders) A.setReminders(on); else { try { localStorage.setItem("zarplata.rem", on ? "1" : "0"); } catch (e) { } }
+    render(); toast(on ? "Напоминания включены" : "Напоминания выключены");
+  },
   companies: openCompanies, switchCo: t => switchCompany(t.dataset.id), newCo: openNewCo, createCo: createCompany, delCo: deleteCompany,
   wipe: () => {
     if (!confirmBox("Стереть ВСЕ компании, сотрудников и начисления? Это нельзя отменить.")) return;

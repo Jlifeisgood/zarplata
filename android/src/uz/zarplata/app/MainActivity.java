@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
@@ -89,6 +90,17 @@ public class MainActivity extends Activity {
     }
 
     private class Bridge {
+        /** Напоминания о сроках отчёта: включить/выключить (на Android 13+ сначала просим разрешение на уведомления). */
+        @JavascriptInterface public void setReminders(final boolean on) {
+            runOnUiThread(() -> {
+                if (on && Build.VERSION.SDK_INT >= 33 && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != 0)
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 12);
+                Reminders.setEnabled(MainActivity.this, on);
+            });
+        }
+
+        @JavascriptInterface public boolean remindersOn() { return Reminders.enabled(MainActivity.this); }
+
         @JavascriptInterface public String appVersion() {
             try {
                 PackageInfo p = getPackageManager().getPackageInfo(getPackageName(), 0);
