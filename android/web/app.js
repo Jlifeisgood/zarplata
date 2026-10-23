@@ -2,7 +2,6 @@
 /* Зарплата — расчёт НДФЛ, ИНПС, ЕСП. Все данные хранятся только на телефоне. */
 const A = window.Android;
 const C = window.Calc;
-const KEY = "zarplata.v1";
 const MONTHS = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
 const MONTHS_G = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 
@@ -35,29 +34,49 @@ const ICON = {
 };
 
 /* ---------- данные ---------- */
+/* Компаний может быть несколько: у каждой свои сотрудники, начисления и правила (ключ zarplata.c.<id>);
+   список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
+const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, theme: "auto", company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES), emps: [], months: {} };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES), emps: [], months: {} };
 }
-function load() {
-  try {
-    const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && s.v === 1 && Array.isArray(s.emps)) {
-      s.rules = Object.assign({}, C.DEFAULT_RULES, s.rules);
-      if (s.rules.mrot === 1271000) s.rules.mrot = C.DEFAULT_RULES.mrot; // МРОТ вырос с 01.09.2026
-      s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
-      s.months = s.months || {};
-      if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
-      if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
-        s.rv = 2; s.rules.inpsGph = true;
-        Object.values(s.months).forEach(m => { if (m.rules) m.rules.inpsGph = true; });
-      }
-      return s;
-    }
-  } catch (e) { }
-  return blank();
+function normalize(s) {
+  if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
+  s.rules = Object.assign({}, C.DEFAULT_RULES, s.rules);
+  if (s.rules.mrot === 1271000) s.rules.mrot = C.DEFAULT_RULES.mrot; // МРОТ вырос с 01.09.2026
+  s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
+  s.months = s.months || {};
+  if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
+  if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
+    s.rv = 2; s.rules.inpsGph = true;
+    Object.values(s.months).forEach(m => { if (m.rules) m.rules.inpsGph = true; });
+  }
+  return s;
 }
-let S = load();
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast("Не удалось сохранить данные"); } }
+function lsGet(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+function loadReg() {
+  let reg = lsGet(REG_KEY);
+  if (reg && Array.isArray(reg.list) && reg.list.length) {
+    if (!reg.list.some(c => c.id === reg.active)) reg.active = reg.list[0].id;
+    return reg;
+  }
+  // первый запуск или обновление со старой версии (одна компания в zarplata.v1)
+  const old = lsGet("zarplata.v1"), first = normalize(old) || blank(), id = "c1";
+  lsSet(CO_KEY(id), first);
+  reg = { v: 1, active: id, list: [{ id, name: first.company.name }], theme: (old && old.theme) || "auto" };
+  lsSet(REG_KEY, reg);
+  return reg;
+}
+let REG = loadReg();
+let S = normalize(lsGet(CO_KEY(REG.active))) || blank();
+function save() {
+  const c = REG.list.find(x => x.id === REG.active);
+  if (c) c.name = S.company.name;
+  if (!lsSet(CO_KEY(REG.active), S) || !lsSet(REG_KEY, REG)) toast("Не удалось сохранить данные");
+}
+const coLabel = c => c.name || "Без названия";
+const coPrefix = () => (S.company.name || "").replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "");
 
 const rulesFor = ym => (S.months[ym] && S.months[ym].rules) || S.rules;
 const empActive = (e, ym) => e.from <= ym && (!e.to || ym <= e.to);
@@ -163,10 +182,10 @@ function render() {
 }
 function applyTheme() {
   const r = document.documentElement;
-  if (S.theme === "auto") r.removeAttribute("data-theme"); else r.setAttribute("data-theme", S.theme);
+  if (REG.theme === "auto") r.removeAttribute("data-theme"); else r.setAttribute("data-theme", REG.theme);
   try {
     if (A && A.setBars) {
-      const dark = S.theme === "dark" || (S.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+      const dark = REG.theme === "dark" || (REG.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
       A.setBars(getComputedStyle(document.body).backgroundColor, dark);
     }
   } catch (e) { }
@@ -197,7 +216,7 @@ function payItem(x) {
 }
 function viewPay() {
   const ym = ui.ym, rows = monthRows(ym), live = rows.filter(x => !x.en.skip);
-  let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + esc(S.company.name || "Мои сотрудники") + '</div></div><div class="page">';
+  let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + coChip() + '</div></div><div class="page">';
   h += '<div class="month"><button class="ib" data-act="ym" data-d="-1" aria-label="Предыдущий месяц">' + ICON.left + '</button><div class="m">' + ymLabel(ym) +
     (ym === curYm() ? "<small>текущий месяц</small>" : "") + '</div><button class="ib" data-act="ym" data-d="1" aria-label="Следующий месяц">' + ICON.right + '</button></div>';
   h += yearNote(ym);
@@ -286,7 +305,7 @@ function viewTeam() {
   const cur = curYm();
   const act = S.emps.filter(e => !e.to || e.to >= cur), old = S.emps.filter(e => e.to && e.to < cur);
   const byName = (a, b) => a.last.localeCompare(b.last, "ru");
-  let h = '<div class="top"><h1>Сотрудники</h1><div class="sub">' + act.length + ' работает' + (old.length ? ", " + old.length + " уволено" : "") + '</div></div><div class="page">';
+  let h = '<div class="top"><h1>Сотрудники</h1><div class="sub">' + coChip() + ' · ' + act.length + ' работает' + (old.length ? ", " + old.length + " уволено" : "") + '</div></div><div class="page">';
   if (!S.emps.length) return h + empty(ICON.team, "Добавьте первого сотрудника", "Фамилия, имя и сумма — этого достаточно. ПИНФЛ можно добавить позже.",
     '<button class="btn" data-act="newEmp">' + ICON.plus + 'Добавить сотрудника</button>') + "</div>";
   if (S.company.split) {
@@ -432,7 +451,7 @@ function tableHtml(rep) {
 }
 function viewRep() {
   const months = repMonths(), agg = aggregate(months), rep = buildReport(ui.kind, agg, true);
-  let h = '<div class="top"><h1>Отчёты</h1><div class="sub">' + esc(S.company.name || "") + '</div></div><div class="page">';
+  let h = '<div class="top"><h1>Отчёты</h1><div class="sub">' + coChip() + '</div></div><div class="page">';
   h += '<div class="chips">' + [["reg", "Ведомость"], ["tax", "НДФЛ и взносы"], ["sum", "Свод"]].map(k => '<button class="chip ' + (ui.kind === k[0] ? "on" : "") + '" data-act="kind" data-v="' + k[0] + '">' + k[1] + '</button>').join("") + '</div>';
   h += seg("per", ui.per, [["month", "Месяц"], ["quarter", "Квартал"], ["year", "Год"]], "per");
   h += '<div class="month"><button class="ib" data-act="repNav" data-d="-1">' + ICON.left + '</button><div class="m">' + repLabel() + '</div><button class="ib" data-act="repNav" data-d="1">' + ICON.right + '</button></div>';
@@ -452,18 +471,19 @@ function repTitle() { return (S.company.name ? S.company.name + " — " : "") + 
 function exportXlsx() {
   const agg = aggregate(repMonths());
   if (!agg.rows.length) { toast("Нет данных за период"); return; }
-  const wb = XLSX.utils.book_new();
-  [["reg", "Ведомость"], ["tax", "НДФЛ"], ["sum", "Свод"]].forEach(([k, name]) => {
-    const rep = buildReport(k, agg, false);
-    const aoa = [[S.company.name || "Организация"], ["ИНН: " + (S.company.inn || "—")], [name + " · " + repLabel()], [], rep.head];
-    rep.body.forEach(r => aoa.push(r.t === "grp" ? [r.cells[0]] : r.cells));
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = rep.head.map((h, i) => ({ wch: i === 0 ? 34 : i === 1 && k === "tax" ? 18 : 15 }));
-    Object.keys(ws).forEach(a => { if (a[0] !== "!" && typeof ws[a].v === "number") ws[a].z = "#,##0"; });
-    XLSX.utils.book_append_sheet(wb, ws, name);
-  });
-  const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
-  const fname = "Зарплата_" + repLabel().replace(/\s+/g, "_") + ".xlsx";
+  const t = agg.tot, d = new Date();
+  const cfg = {
+    reg: { name: "Ведомость", title: "Расчётная ведомость", widths: [36, 17, 15, 13, 17, 15] },
+    tax: { name: "НДФЛ", title: "НДФЛ, ИНПС и соцналог по сотрудникам", widths: [36, 19, 13, 17, 15, 13, 17, 15], center: [1, 2] },
+    sum: { name: "Свод", title: "Свод по отделам и договорам", widths: [34, 9, 17, 15, 13, 15, 17, 17], center: [1],
+      footerTitle: "К перечислению и выплате за период",
+      footer: [["НДФЛ в бюджет", t.pitBudget], ["ИНПС (на накопительные счета)", t.inps], ["Соцналог (ЕСП)", t.esp], ["Выплатить сотрудникам (на руки)", t.net]] }
+  };
+  const b64 = window.buildReportXlsx({
+    company: S.company.name || "Организация", inn: "ИНН: " + (S.company.inn || "—"), period: repLabel(),
+    note: "Сформировано в приложении «Зарплата» " + pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear() + ". Данные справочные — сверяйте с личным кабинетом my.soliq.uz."
+  }, ["reg", "tax", "sum"].map(k => Object.assign({}, cfg[k], buildReport(k, agg, false))));
+  const fname = (coPrefix() || "Зарплата") + "_" + repLabel().replace(/\s+/g, "_") + ".xlsx";
   sendFile(fname, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b64);
 }
 /* Приложение 4 к расчёту НДФЛ и соцналога (шаблон 11101_20 из my.soliq.uz): данные с 15-й строки, нарастающим итогом с начала года */
@@ -488,7 +508,7 @@ function exportSoliq() {
   const noPin = cum.rows.filter(x => !x.e.pinfl).length;
   const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId && !S.rules.benId).length;
   if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (карточка сотрудника)"), 4200);
-  sendFile("Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  sendFile((coPrefix() ? coPrefix() + "_" : "") + "Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     window.fillTemplate(rows));
   if (noPin) setTimeout(() => toast("У " + noPin + " сотр. нет ПИНФЛ — допишите в файле или в приложении"), 1800);
 }
@@ -511,9 +531,11 @@ function viewSet() {
     sw("swr", "itpark", R.itpark, "Резидент IT Park", "Трудовые договоры: НДФЛ " + pct(R.pitIt) + ", ЕСП " + pct(R.espIt) + ". ГПХ — по обычным ставкам. Действует до 01.01.2028 (УП-5099, п. 5 и 8)");
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
-  h += '<div class="sec">Оформление</div>' + seg("theme", S.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
+  h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
-    '<button class="btn bad" data-act="wipe">Стереть все данные</button></div><input type="file" id="restore-file" accept=".json,application/json" hidden>';
+    '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
+    '<button class="btn bad" data-act="delCo">Удалить эту компанию</button>' +
+    '<button class="btn bad" data-act="wipe">' + (REG.list.length > 1 ? "Стереть все компании и данные" : "Стереть все данные") + '</button></div><input type="file" id="restore-file" accept=".json,application/json" hidden>';
   h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + '</b><br>Данные хранятся только на этом телефоне, приложение не выходит в интернет. Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
   return h;
 }
@@ -558,22 +580,85 @@ function shareText(title, text) {
   if (A && A.shareText) A.shareText(title, text);
   else if (navigator.clipboard) { navigator.clipboard.writeText(text); toast("Скопировано"); }
 }
+/* Резервная копия: все компании в одном файле (v2). Файл старой версии (одна компания, v1) восстанавливается как новая компания. */
 function backup() {
-  const d = new Date();
-  sendFile("zarplata-backup-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + ".json", "application/json", toB64(JSON.stringify(S)), false);
+  save();
+  const d = new Date(), companies = {};
+  REG.list.forEach(c => { companies[c.id] = c.id === REG.active ? S : lsGet(CO_KEY(c.id)); });
+  sendFile("zarplata-backup-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + ".json", "application/json",
+    toB64(JSON.stringify({ v: 2, reg: REG, companies })), false);
 }
 function restoreFrom(file) {
   const rd = new FileReader();
   rd.onload = () => {
     try {
       const s = JSON.parse(rd.result);
-      if (!s || s.v !== 1 || !Array.isArray(s.emps)) throw 0;
-      if (!confirmBox("Заменить текущие данные копией (" + s.emps.length + " сотр.)?")) return;
-      S = s; S.rules = Object.assign({}, C.DEFAULT_RULES, S.rules); S.months = S.months || {}; S.setup = true;
-      save(); render(); toast("Данные восстановлены");
+      if (s && s.v === 2 && s.reg && s.companies) {
+        const list = (s.reg.list || []).filter(c => normalize(s.companies[c.id]));
+        if (!list.length) throw 0;
+        if (!confirmBox("Заменить все данные копией (компаний: " + list.length + ")?")) return;
+        const theme = REG.theme;
+        REG.list.forEach(c => { try { localStorage.removeItem(CO_KEY(c.id)); } catch (e) { } });
+        list.forEach(c => lsSet(CO_KEY(c.id), normalize(s.companies[c.id])));
+        REG = { v: 1, active: list.some(c => c.id === s.reg.active) ? s.reg.active : list[0].id, list: list.map(c => ({ id: c.id, name: c.name || "" })), theme };
+        S = normalize(lsGet(CO_KEY(REG.active)));
+        save(); closeSheet(); render(); toast("Данные восстановлены");
+        return;
+      }
+      const one = normalize(s);
+      if (!one) throw 0;
+      if (!confirmBox("Добавить компанию «" + (one.company.name || "без названия") + "» (" + one.emps.length + " сотр.) из копии?")) return;
+      save(); one.setup = true;
+      const id = uid(); REG.list.push({ id, name: one.company.name }); REG.active = id; S = one; save();
+      closeSheet(); render(); toast("Компания добавлена");
     } catch (e) { toast("Это не файл резервной копии"); }
   };
   rd.readAsText(file);
+}
+
+/* ---------- компании ---------- */
+const chevron = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+const coChip = () => '<button class="co" data-act="companies">' + esc(coLabel({ name: S.company.name })) + (REG.list.length > 1 ? ' <span class="n">' + REG.list.length + '</span>' : "") + chevron + '</button>';
+function openCompanies() {
+  D = { kind: "co" };
+  openSheet('<h2>Компании</h2><p class="sub">У каждой компании свои сотрудники, начисления и правила.</p>' +
+    '<div class="card">' + REG.list.map(c => '<button class="item" data-act="switchCo" data-id="' + c.id + '"><div class="av ' + (c.id === REG.active ? "" : "off") + '" style="' + (c.id === REG.active ? "" : "background:var(--line);color:var(--mute)") + '">' +
+      esc((coLabel(c)[0] || "?").toUpperCase()) + '</div><div class="grow"><div class="nm">' + esc(coLabel(c)) + '</div><div class="sb">' + (c.id === REG.active ? "открыта сейчас" : "нажмите, чтобы открыть") + '</div></div>' +
+      (c.id === REG.active ? '<span class="badge ok">✓</span>' : "") + '</button>').join("") + '</div>' +
+    '<div class="stack"><button class="btn" data-act="newCo">' + ICON.plus + 'Добавить компанию</button></div>');
+}
+function switchCompany(id) {
+  if (id === REG.active) { closeSheet(); return; }
+  save(); REG.active = id;
+  S = normalize(lsGet(CO_KEY(id))) || blank();
+  save(); ui.filter = "all"; ui.showOld = false; D = null;
+  closeSheet(); render(); window.scrollTo(0, 0); toast("Открыта: " + coLabel({ name: S.company.name }));
+}
+function openNewCo() {
+  D = { kind: "newco", split: false };
+  openSheet('<h2>Новая компания</h2><p class="sub">Сотрудников можно добавить после создания.</p>' +
+    '<label class="f"><span>Название *</span><input class="in" id="n-name" placeholder="Например, ООО «Ромашка»" autocomplete="off"></label>' +
+    '<label class="f"><span>ИНН (по желанию)</span><input class="in" id="n-inn" inputmode="numeric" maxlength="9" placeholder="9 цифр"></label>' +
+    sw("swd", "split", false, "Есть производство", "Разделять сотрудников на АУП и производство") +
+    '<div class="stack"><button class="btn" data-act="createCo">Создать</button></div>');
+}
+function createCompany() {
+  const name = $("#n-name").value.trim();
+  if (!name) { $("#n-name").classList.add("bad"); toast("Введите название"); return; }
+  save();
+  const s = blank(); s.setup = true; s.company = { name, inn: $("#n-inn").value.replace(/\D/g, ""), split: !!D.split };
+  const id = uid(); REG.list.push({ id, name }); REG.active = id; S = s; save();
+  ui.tab = "pay"; ui.filter = "all"; closeSheet(); render(); window.scrollTo(0, 0); toast("Компания создана");
+}
+function deleteCompany() {
+  const name = coLabel({ name: S.company.name });
+  if (!confirmBox("Удалить компанию «" + name + "» со всеми сотрудниками и начислениями? Это нельзя отменить.")) return;
+  if (!confirmBox("Точно удалить «" + name + "»? Сначала можно сохранить резервную копию.")) return;
+  try { localStorage.removeItem(CO_KEY(REG.active)); } catch (e) { }
+  REG.list = REG.list.filter(c => c.id !== REG.active);
+  if (!REG.list.length) { const id = uid(); REG.list.push({ id, name: "" }); REG.active = id; S = blank(); D = { split: false }; }
+  else { REG.active = REG.list[0].id; S = normalize(lsGet(CO_KEY(REG.active))) || blank(); }
+  save(); ui.tab = "pay"; ui.filter = "all"; render(); window.scrollTo(0, 0); toast("Компания удалена");
 }
 
 /* ---------- демо ---------- */
@@ -643,14 +728,18 @@ const ACT = {
   per: t => { ui.per = t.dataset.v; render(); },
   repNav: t => { ui.repYm = addYm(ui.repYm, +t.dataset.d * (ui.per === "month" ? 1 : ui.per === "quarter" ? 3 : 12)); render(); },
   xlsx: exportXlsx, repText, soliq: exportSoliq,
-  theme: t => { S.theme = t.dataset.v; save(); render(); },
+  theme: t => { REG.theme = t.dataset.v; save(); render(); },
   rates: openRates, saveRates,
   resetRates: () => { freezePast(); const b = S.rules.budget, it = S.rules.itpark; S.rules = Object.assign({}, C.DEFAULT_RULES, { budget: b, itpark: it }); save(); closeSheet(); render(); toast("Стандартные ставки"); },
   backup, restore: () => $("#restore-file").click(),
+  companies: openCompanies, switchCo: t => switchCompany(t.dataset.id), newCo: openNewCo, createCo: createCompany, delCo: deleteCompany,
   wipe: () => {
-    if (!confirmBox("Стереть всех сотрудников и все начисления? Это нельзя отменить.")) return;
-    if (!confirmBox("Точно стереть? Сначала можно сохранить резервную копию.")) return;
-    S = blank(); save(); D = { split: false }; ui.tab = "pay"; render();
+    if (!confirmBox("Стереть ВСЕ компании, сотрудников и начисления? Это нельзя отменить.")) return;
+    if (!confirmBox("Точно стереть всё? Сначала можно сохранить резервную копию.")) return;
+    REG.list.forEach(c => { try { localStorage.removeItem(CO_KEY(c.id)); } catch (e) { } });
+    const id = uid(), theme = REG.theme;
+    REG = { v: 1, active: id, list: [{ id, name: "" }], theme };
+    S = blank(); save(); D = { split: false }; ui.tab = "pay"; ui.filter = "all"; render();
   }
 };
 document.addEventListener("click", ev => {
@@ -664,7 +753,7 @@ document.addEventListener("input", ev => {
   if (el.id === "f-amt") {
     const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; el.classList.remove("bad"); updPreview();
   } else if (el.id === "f-ben") updPreview();
-  else if (el.id === "f-pinfl" || el.id === "w-inn" || el.id === "c-inn") el.value = el.value.replace(/\D/g, "");
+  else if (el.id === "f-pinfl" || el.id === "w-inn" || el.id === "c-inn" || el.id === "n-inn") el.value = el.value.replace(/\D/g, "");
   else if (el.id === "c-name") { S.company.name = el.value; save(); }
   if (el.id === "c-inn") { S.company.inn = el.value; save(); }
   if (el.classList.contains("bad")) el.classList.remove("bad");

@@ -41,6 +41,7 @@
   }
 
   const toB64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+  window.XZip = { zipStore, toB64, enc, xmlEsc, colName };
 
   /**
    * rows: массив строк; значения — число, строка или null. Колонки идут с B (графа 1). Данные пишутся с 15-й строки.
