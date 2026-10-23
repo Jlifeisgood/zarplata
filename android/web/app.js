@@ -432,6 +432,19 @@ function exportXlsx() {
     Object.keys(ws).forEach(a => { if (a[0] !== "!" && typeof ws[a].v === "number") ws[a].z = "#,##0"; });
     XLSX.utils.book_append_sheet(wb, ws, name);
   });
+  // Данные для приложения 4 к расчёту по НДФЛ и соцналогу: в кабинете отчёт подаётся нарастающим итогом с начала года
+  const last = repMonths().slice(-1)[0], yr = last.slice(0, 4);
+  const cum = aggregate(Array.from({ length: +last.slice(5) }, (_, i) => yr + "-" + pad(i + 1)));
+  const mon = new Map(aggregate([last]).rows.map(x => [x.e.id, x]));
+  const a4 = [[S.company.name || "Организация"], ["ИНН: " + (S.company.inn || "—")],
+    ["Данные для приложения 4 · " + ymLabel(last) + " · нарастающим итогом с начала года"],
+    ["Порядок граф условный: перенесите значения в шаблон приложения 4 из кабинета my.soliq.uz"], [],
+    ["№", "ФИО", "ПИНФЛ", "Статус", "Начислено за месяц", "Начислено с начала года", "НДФЛ за месяц", "НДФЛ с начала года", "ИНПС с начала года", "Договор"]];
+  cum.rows.forEach((x, i) => { const m = mon.get(x.e.id) || ZERO(); a4.push([i + 1, fullName(x.e), x.e.pinfl || "", "резидент", m.gross, x.gross, m.pit, x.pit, x.inps, x.type === "gph" ? "ГПХ" : "трудовой"]); });
+  const ws4 = XLSX.utils.aoa_to_sheet(a4);
+  ws4["!cols"] = [5, 34, 18, 11, 18, 20, 15, 18, 16, 11].map(w => ({ wch: w }));
+  Object.keys(ws4).forEach(a => { if (a[0] !== "!" && typeof ws4[a].v === "number" && a.replace(/\D/g, "") > 6) ws4[a].z = "#,##0"; });
+  XLSX.utils.book_append_sheet(wb, ws4, "Прил.4 (данные)");
   const b64 = XLSX.write(wb, { type: "base64", bookType: "xlsx" });
   const fname = "Зарплата_" + repLabel().replace(/\s+/g, "_") + ".xlsx";
   sendFile(fname, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b64);
