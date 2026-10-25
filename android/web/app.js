@@ -650,8 +650,34 @@ function viewRep() {
   h += '<div class="btns"><button class="btn" data-act="xlsx">' + ICON.file + 'Excel</button><button class="btn sec2" data-act="repText">' + ICON.share + 'Текстом</button></div>' +
     '<div class="btns"><button class="btn sec2" data-act="soliq">' + ICON.file + 'Файл для my.soliq.uz (приложение 4)</button></div>' +
     '<div class="hint" style="margin:8px 2px 0">Графы 11 и 13 — нарастающим итогом с января (или с даты принятия) по выбранный месяц. Если в прошлых месяцах начисляли по-другому, поправьте суммы в этих месяцах на вкладке «Зарплата».</div>';
+  h += soliqHelp();
   h += '<div class="note"><b>Справочно.</b> Приложение готовит цифры для сверки; отчётность подаётся и корректируется в личном кабинете my.soliq.uz (по НК: ежемесячно, до 15 числа следующего месяца; итог за год — до 15 февраля). Ставки проверьте в «Настройки → Правила».</div>';
   return h + "</div>";
+}
+/* Что вносится в основной расчёт вручную после загрузки файла (по разбору проактивной формы 11101_20) и как загрузить файл */
+function soliqHelp() {
+  const last = repMonths().slice(-1)[0], yr = last.slice(0, 4);
+  const cum = aggregate(Array.from({ length: +last.slice(5) }, (_, i) => yr + "-" + pad(i + 1)));
+  const rows = cum.rows.filter(x => x.gross - x.sick > 0);
+  if (!rows.length) return "";
+  const mon = aggregate([last]), R = rulesEff(last), it = R.itpark;
+  const line = (a, b) => '<div class="l"><span>' + a + '</span><span class="num">' + b + '</span></div>';
+  const itCum = rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick, 0);
+  const itMon = mon.rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick, 0);
+  let h = '<div class="sec">Вносится вручную в основной расчёт · ' + esc(ymLabel(last)) + '</div><div class="calc">' +
+    line("Количество работников", rows.length) +
+    line("ИНПС за месяц", fmt(mon.tot.inps)) + line("ИНПС с начала года", fmt(cum.tot.inps)) +
+    line("Ставка социального налога", pct(R.budget ? R.espBudget : R.esp) + (it ? " (у IT Park по трудовым — льгота)" : "")) + '</div>';
+  if (it && itCum > 0) {
+    h += '<div class="calc">' + line("Приложение 1 — льгота по соцналогу IT Park, код 10230090", "") + line("Оплата труда за месяц", fmt(itMon)) + line("Оплата труда с начала года", fmt(itCum)) + '</div>' +
+      '<div class="hint">Код льготы по соцналогу (УП-5099, п. 5) взят из видеоразбора формы — выберите в списке «Приложение 1» в кабинете и сверьте.</div>';
+  }
+  h += '<details class="more"><summary>Как загрузить файл в my.soliq.uz</summary>' +
+    '<div class="hint" style="margin:0 0 8px">1. Кабинет → «Отправка отчётности ЮЛ» → «Электронные формы» → налог на доходы физлиц → расчёт 11101_20 (код 46), год и месяц.</div>' +
+    '<div class="hint" style="margin:0 0 8px">2. В разделе «Проактивный» выберите файл из приложения и нажмите «Загрузить в отчёт». Приложения 4 и 5 заполнятся автоматически.</div>' +
+    '<div class="hint" style="margin:0 0 8px">3. Впишите количество работников, ставку соцналога и сумму ИНПС (см. выше), при льготе IT Park — Приложение 1.</div>' +
+    '<div class="hint" style="margin:0 0 12px">4. «Отправить» — отчёт принят сразу. «Сохранить» — черновик: 5 дней на правки, без правок принимается сам.</div></details>';
+  return h;
 }
 function repTitle() { return (S.company.name ? S.company.name + " — " : "") + repLabel(); }
 function exportXlsx() {
