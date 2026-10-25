@@ -1169,7 +1169,7 @@ const ACT = {
   slip: () => { const e = curDraftEmp(); if (e) shareText("Расчётный листок", payslip(e)); },
   delEmp: () => {
     const e = S.emps.find(x => x.id === D.id);
-    if (!confirmBox("Удалить «" + fullName(e) + "» вместе с историей начислений? Для увольнения лучше указать «Последний месяц».")) return;
+    if (!confirmBox("Удалить «" + fullName(e) + "» вместе с историей начислений? Для увольнения лучше указать дату увольнения в карточке.")) return;
     S.emps = S.emps.filter(x => x.id !== e.id);
     S.events = (S.events || []).filter(ev => ev.emp !== e.id);
     S.aids = (S.aids || []).filter(a => a.emp !== e.id);
