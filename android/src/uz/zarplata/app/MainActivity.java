@@ -101,6 +101,9 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface public boolean remindersOn() { return Reminders.enabled(MainActivity.this); }
 
+        /** Язык интерфейса (ru / uz) — для текста уведомлений. */
+        @JavascriptInterface public void setLang(String l) { Reminders.prefs(MainActivity.this).edit().putString("lang", "uz".equals(l) ? "uz" : "ru").apply(); }
+
         @JavascriptInterface public String appVersion() {
             try {
                 PackageInfo p = getPackageManager().getPackageInfo(getPackageName(), 0);

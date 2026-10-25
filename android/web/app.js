@@ -95,7 +95,7 @@ function loadReg() {
   // первый запуск или обновление со старой версии (одна компания в zarplata.v1)
   const old = lsGet("zarplata.v1"), first = normalize(old) || blank(), id = "c1";
   lsSet(CO_KEY(id), first);
-  reg = { v: 1, active: id, list: [{ id, name: first.company.name }], theme: (old && old.theme) || "auto" };
+  reg = { v: 1, active: id, list: [{ id, name: first.company.name }], theme: (old && old.theme) || "auto", lang: "ru" };
   lsSet(REG_KEY, reg);
   return reg;
 }
@@ -245,7 +245,15 @@ window.handleBack = () => {
   if (S.setup && ui.tab !== "pay") { setTab("pay"); return true; }
   return false;
 };
-function confirmBox(msg) { return window.confirm(msg); }
+function confirmBox(msg) { return window.confirm(I18N.tr(msg)); }
+/* Язык интерфейса (ru / uz): перевод подставляется на лету, см. i18n.js; в файлы отчётов переводятся подписи, официальная форма для кабинета не меняется */
+const trSheet = s => Object.assign({}, s, {
+  name: I18N.tr(s.name), title: I18N.tr(s.title), head: s.head.map(I18N.tr), footerTitle: s.footerTitle && I18N.tr(s.footerTitle),
+  footer: s.footer && s.footer.map(f => [I18N.tr(f[0]), f[1]]),
+  body: s.body.map(b => Object.assign({}, b, { cells: b.cells.map(c => typeof c === "string" ? I18N.tr(c) : c) }))
+});
+const trMeta = m => Object.assign({}, m, { inn: I18N.tr(m.inn), period: I18N.tr(m.period), note: I18N.tr(m.note) });
+{ const raw = window.buildReportXlsx; window.buildReportXlsx = (m, s) => raw(trMeta(m), s.map(trSheet)); }
 
 /* ---------- общие блоки ---------- */
 function breakdown(r, rules, type, x) {
@@ -1057,6 +1065,7 @@ function viewSet() {
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
   h += '<div class="sec">Напоминания</div>' + sw("rem", "rem", remOn(), "О сроках отчёта", "12 и 15 числа в 09:00: НДФЛ и соцналог — до 15 числа, годовой отчёт — до 15 февраля");
+  h += '<div class="sec">Язык / Til</div>' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang");
   h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
     '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
@@ -1108,6 +1117,7 @@ function sendFile(name, mime, b64, noShare) {
   }
 }
 function shareText(title, text) {
+  title = I18N.tr(title); text = I18N.tr(text);
   if (A && A.shareText) A.shareText(title, text);
   else if (navigator.clipboard) { navigator.clipboard.writeText(text); toast("Скопировано"); }
 }
@@ -1307,6 +1317,11 @@ const ACT = {
     if (S.emps.length && confirmBox("Применить график " + S.company.wd + "-дневной недели ко всем сотрудникам?")) S.emps.forEach(e => { e.wd = S.company.wd; });
     save(); render();
   },
+  lang: t => {
+    REG.lang = t.dataset.v === "uz" ? "uz" : "ru"; save();
+    I18N.setLang(REG.lang); if (A && A.setLang) A.setLang(REG.lang);
+    render(); closeSheet();
+  },
   rem: () => {
     const on = !remOn(); ui.rem = on;
     if (A && A.setReminders) A.setReminders(on); else { try { localStorage.setItem("zarplata.rem", on ? "1" : "0"); } catch (e) { } }
@@ -1366,4 +1381,6 @@ document.addEventListener("keydown", ev => { if (ev.key === "Escape" && sheetOpe
 
 D = { split: false };
 render();
+I18N.setLang(REG.lang || "ru");
+if (A && A.setLang) A.setLang(REG.lang || "ru");
 window.__dbg = { S: () => S, ui, ACT };

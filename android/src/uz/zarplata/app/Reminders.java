@@ -16,6 +16,7 @@ import java.util.Calendar;
 public class Reminders extends BroadcastReceiver {
     private static final String CHANNEL = "deadlines";
     private static final String[] MONTHS = {"январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"};
+    private static final String[] MONTHS_UZ = {"yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentyabr", "oktyabr", "noyabr", "dekabr"};
 
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("app", Context.MODE_PRIVATE); }
 
@@ -65,12 +66,20 @@ public class Reminders extends BroadcastReceiver {
         int day = now.get(Calendar.DAY_OF_MONTH);
         Calendar prev = (Calendar) now.clone();
         prev.add(Calendar.MONTH, -1);
-        String period = MONTHS[prev.get(Calendar.MONTH)] + " " + prev.get(Calendar.YEAR);
-        String title = day >= 15 ? "Сегодня срок сдачи отчёта" : "Через 3 дня срок сдачи отчёта";
-        String text = "НДФЛ и соцналог за " + period + ": сдать отчёт и заплатить до 15 числа.";
-        if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Не забудьте годовой отчёт за " + prev.get(Calendar.YEAR) + " год.";
+        boolean uz = "uz".equals(prefs(c).getString("lang", "ru"));
+        String period = (uz ? MONTHS_UZ : MONTHS)[prev.get(Calendar.MONTH)] + " " + prev.get(Calendar.YEAR);
+        String title, text;
+        if (uz) {
+            title = day >= 15 ? "Bugun hisobot topshirish muddati" : "Hisobot topshirishga 3 kun qoldi";
+            text = "JShDS va ijtimoiy soliq, " + period + ": hisobotni topshiring va 15-sanagacha to'lang.";
+            if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Yillik hisobot (" + prev.get(Calendar.YEAR) + ") ni unutmang.";
+        } else {
+            title = day >= 15 ? "Сегодня срок сдачи отчёта" : "Через 3 дня срок сдачи отчёта";
+            text = "НДФЛ и соцналог за " + period + ": сдать отчёт и заплатить до 15 числа.";
+            if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Не забудьте годовой отчёт за " + prev.get(Calendar.YEAR) + " год.";
+        }
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
-        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(new NotificationChannel(CHANNEL, "Сроки отчётности", NotificationManager.IMPORTANCE_DEFAULT));
+        if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(new NotificationChannel(CHANNEL, uz ? "Hisobot muddatlari" : "Сроки отчётности", NotificationManager.IMPORTANCE_DEFAULT));
         PendingIntent open = PendingIntent.getActivity(c, 8, new Intent(c, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         android.app.Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new android.app.Notification.Builder(c, CHANNEL) : new android.app.Notification.Builder(c);
         b.setSmallIcon(R.drawable.ic_notif).setContentTitle(title).setContentText(text).setStyle(new android.app.Notification.BigTextStyle().bigText(text))
