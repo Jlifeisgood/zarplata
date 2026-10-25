@@ -62,6 +62,37 @@
     };
   }
 
-  var api = { DIV: DIV, FIXED: FIXED, addDays: addDays, isSunday: isSunday, isHoliday: isHoliday, isWorkDay: isWorkDay, workDays: workDays, eachDay: eachDay, vacation: vacation, sick: sick };
+  /** Прибавляет n месяцев к дате (ISO); если в месяце нет такого числа — последний день месяца */
+  function addMonths(s, n) {
+    var d = toDate(s), day = d.getDate();
+    d.setDate(1); d.setMonth(d.getMonth() + n);
+    d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+    return iso(d);
+  }
+  var diffDays = function (a, b) { return Math.round((toDate(b) - toDate(a)) / 86400000); };
+  /** Полные месяцы работы в последнем рабочем году (ТК ст. 223–224): остаток 15 дней и более считается за месяц, менее — нет */
+  function workMonths(hire, fire) {
+    var y = 0;
+    while (addMonths(hire, 12 * (y + 1)) <= addDays(fire, 1)) y++;
+    var start = addMonths(hire, 12 * y), m = 0;
+    while (addDays(addMonths(start, m + 1), -1) <= fire) m++;
+    var rest = diffDays(addMonths(start, m), fire) + 1;
+    if (rest >= 15) m++;
+    return { years: y, start: start, months: Math.min(m, 12), rest: rest };
+  }
+  /**
+   * Компенсация за неиспользованный отпуск при увольнении (ТК ст. 234, 223, 224):
+   * o: { hire, fire, leave (дней отпуска в году), used (уже использовано в этом рабочем году), prev (неиспользованные дни прошлых лет), avg }
+   * Дни за текущий год = leave / 12 × полные месяцы (дробная часть от 0,5 — вверх); воскресенья не оплачиваются.
+   */
+  function compensation(o) {
+    var wm = workMonths(o.hire, o.fire), raw = o.leave / 12 * wm.months;
+    var earned = Math.floor(raw) + (raw - Math.floor(raw) >= 0.5 ? 1 : 0);
+    var days = (o.prev || 0) + earned - (o.used || 0), n = Math.abs(days);
+    var sun = Math.floor(n / 7), paid = n - sun;
+    return { months: wm.months, rest: wm.rest, start: wm.start, earned: earned, days: days, sun: sun, paid: paid, pay: (days < 0 ? -1 : 1) * r2(o.avg / DIV * paid) };
+  }
+
+  var api = { addMonths: addMonths, workMonths: workMonths, compensation: compensation, DIV: DIV, FIXED: FIXED, addDays: addDays, isSunday: isSunday, isHoliday: isHoliday, isWorkDay: isWorkDay, workDays: workDays, eachDay: eachDay, vacation: vacation, sick: sick };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.HR = api;
 })(typeof window !== "undefined" ? window : this);

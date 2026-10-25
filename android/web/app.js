@@ -122,7 +122,7 @@ function dayInfo(e, ym) {
   const worked = from > to ? 0 : HR.workDays(ym, wd, ex, from, to);
   let abs = 0;
   (S.events || []).forEach(ev => {
-    if (ev.emp !== e.id) return;
+    if (ev.emp !== e.id || ev.type === "comp") return;
     const a = ev.from > from ? ev.from : from, b = ev.to < to ? ev.to : to;
     if (a <= b) abs += HR.workDays(ym, wd, ex, a, b);
   });
@@ -187,7 +187,7 @@ function aidFor(e, ym) {   // все «прочие доходы» месяца 
 }
 function evExtras(e, ym) {
   let extra = 0, sick = 0;
-  (S.events || []).forEach(ev => { if (ev.emp === e.id && ev.payYm === ym) { if (ev.type === "vac") extra += ev.amount; else sick += ev.amount; } });
+  (S.events || []).forEach(ev => { if (ev.emp === e.id && ev.payYm === ym) { if (ev.type === "sick") sick += ev.amount; else extra += ev.amount; } });
   const a = aidFor(e, ym);
   return { extra, sick, aid: a.aid, aidEx: a.aidEx };
 }
@@ -490,20 +490,58 @@ function exportRegistry() {
 }
 
 /* ---------- отпуска и больничные ---------- */
-const evTitle = ev => (ev.type === "vac" ? "Отпуск " : "Больничный ") + isoToDmy(ev.from) + " – " + isoToDmy(ev.to);
+const evTitle = ev => ev.type === "comp" ? "Компенсация при увольнении " + isoToDmy(ev.to) : (ev.type === "vac" ? "Отпуск " : "Больничный ") + isoToDmy(ev.from) + " – " + isoToDmy(ev.to);
 function evBlock(e) {
   const ms = ui.ym + "-01", me = monthEnd(ui.ym);
   const list = (S.events || []).filter(ev => ev.emp === e.id && ((ev.from <= me && ev.to >= ms) || ev.payYm === ui.ym));
   let h = '<div class="sec" style="margin-top:18px">Отпуск и больничный</div>';
   if (list.length) h += '<div class="card">' + list.map(ev => '<div class="item"><div class="grow"><div class="nm">' + esc(evTitle(ev)) + '</div><div class="sb">' +
-    (ev.type === "vac" ? "отпускные " : "за счёт работодателя ") + fmt(ev.amount) + " · начислено в " + esc(ymLabel(ev.payYm)) + '</div></div>' +
+    (ev.type === "vac" ? "отпускные " : ev.type === "comp" ? "компенсация " : "за счёт работодателя ") + fmt(ev.amount) + " · начислено в " + esc(ymLabel(ev.payYm)) + '</div></div>' +
     '<button class="ib" data-act="delEv" data-id="' + ev.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + "</div>";
   const aids = (S.aids || []).filter(a => a.emp === e.id && a.ym === ui.ym);
   if (aids.length) h += '<div class="card">' + aids.map(a => '<div class="item"><div class="grow"><div class="nm">Материальная помощь</div><div class="sb">' + fmt(a.amount) + ' сум · ' + esc(ymLabel(a.ym)) + '</div></div>' +
     '<button class="ib" data-act="delAid" data-id="' + a.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + "</div>";
   if (entryFor(e, ui.ym).type === "gph") return h + '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button></div><div class="hint">Для договора ГПХ отпуск и больничный не начисляются.</div>';
   return h + '<div class="btns"><button class="btn sec2" data-act="vac">Отпускные…</button><button class="btn sec2" data-act="sick">Больничный…</button></div>' +
-    '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button></div>';
+    '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button><button class="btn sec2" data-act="comp">При увольнении…</button></div>';
+}
+/* Расчёт при увольнении: компенсация за неиспользованный отпуск (ТК ст. 234, 223, 224) */
+function openComp() {
+  const e = curDraftEmp(); if (!e) return;
+  const fire = e.fire || todayIso();
+  D = { kind: "comp", id: e.id, avgTouched: false, avgYm: fire.slice(0, 7) };
+  openSheet('<h2>Расчёт при увольнении</h2><p class="sub">' + esc(fullName(e)) + ' · принят ' + esc(isoToDmy(e.hire || e.from + "-01")) + '</p>' +
+    dateField("c-fire", fire, "Дата увольнения (последний рабочий день)") +
+    '<div class="two"><label class="f"><span>Отпуск в год, дн.</span><input class="in" id="c-leave" inputmode="numeric" value="21" autocomplete="off"></label>' +
+    '<label class="f"><span>Использовано в этом году, дн.</span><input class="in" id="c-used" inputmode="numeric" value="0" autocomplete="off"></label></div>' +
+    '<label class="f"><span>Неиспользовано за прошлые годы, дн.</span><input class="in" id="c-prev" inputmode="numeric" value="0" autocomplete="off"></label>' +
+    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="c-avg" inputmode="decimal" value="' + fmt(avgMonthly(e, fire)) + '" autocomplete="off"></label>' +
+    '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveComp">Добавить в начисления</button></div>');
+  updComp();
+}
+function updComp() {
+  const el = $("#hr-prev"); if (!el || !D || D.kind !== "comp") return;
+  const e = curDraftEmp(), fire = parseDmy($("#c-fire").value), n = id => Number($("#" + id).value.replace(/\D/g, "")) || 0;
+  if (fire && !D.avgTouched && D.avgYm !== fire.slice(0, 7)) { D.avgYm = fire.slice(0, 7); $("#c-avg").value = fmt(avgMonthly(e, fire)); }
+  const avg = parseAmt($("#c-avg").value), hire = e.hire || e.from + "-01";
+  D.res = null;
+  if (!fire || fire < hire || !(avg > 0)) { el.innerHTML = '<div class="hint">Укажите дату увольнения (дд.мм.гггг, не раньше приёма) и среднюю зарплату.</div>'; return; }
+  const c = HR.compensation({ hire, fire, leave: n("c-leave"), used: n("c-used"), prev: n("c-prev"), avg });
+  D.res = { fire, c };
+  const line = (a, b, t) => '<div class="l' + (t ? " t" : "") + '"><span>' + a + '</span><span class="num">' + b + '</span></div>';
+  el.innerHTML = '<div class="calc">' + line("Полных месяцев в последнем рабочем году", c.months + " (с " + isoToDmy(c.start) + ")") +
+    line("Дней отпуска за этот год", c.earned) + line("К ним прошлые годы, минус использовано", c.days) +
+    line("Воскресенья (не оплачиваются)", c.sun) + line("Оплачиваемых дней", c.paid) + line("Компенсация", fmt(Math.max(0, c.pay)), 1) + '</div>' +
+    (c.pay < 0 ? '<div class="alert warn">Отпуск использован авансом: за неотработанные дни удерживается ' + fmt(-c.pay) + ' сум (п. 6 ч. 2 ст. 269 ТК, кроме ряда оснований увольнения). Внесите это как «Удержание».</div>' : "") +
+    '<div class="hint">Остаток от месяца 15 дней и больше считается за месяц, меньше — нет; дробные дни от 0,5 округляются вверх (ст. 224 ТК). Начислится в ' + esc(ymLabel(fire.slice(0, 7)).toLowerCase()) + ' с НДФЛ, ИНПС и соцналогом. Выплатить нужно в день увольнения (ст. 254 ТК).</div>';
+}
+function saveComp() {
+  if (!D || !D.res) { toast("Заполните поля"); return; }
+  const e = curDraftEmp(), { fire, c } = D.res;
+  e.fire = fire; e.to = fire.slice(0, 7);
+  S.events = S.events.filter(ev => !(ev.emp === e.id && ev.type === "comp"));
+  S.events.push({ id: uid(), emp: e.id, type: "comp", from: fire, to: fire, payYm: fire.slice(0, 7), amount: Math.max(0, c.pay), avg: parseAmt($("#c-avg").value) });
+  save(); render(); openPay(e.id); toast("Дата увольнения и компенсация записаны");
 }
 function openAid() {
   const e = curDraftEmp(); if (!e) return;
@@ -1159,6 +1197,7 @@ const ACT = {
   },
   delPay: t => { const id = D && D.id; S.pays = S.pays.filter(p => p.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
   delDed: t => { const id = D && D.id; S.deds = S.deds.filter(d => d.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
+  comp: openComp, saveComp,
   aid: openAid, others: openOthers, saveOther,
   delOther: t => {
     if (!confirmBox("Удалить эту запись о доходе?")) return;
@@ -1236,6 +1275,9 @@ document.addEventListener("input", ev => {
   if (el.id === "v-days") el.value = el.value.replace(/\D/g, "");
   if (el.id === "v-avg" || el.id === "s-avg") { maskMoney(el); D.avgTouched = true; }
   if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
+  if (["c-leave", "c-used", "c-prev"].includes(el.id)) el.value = el.value.replace(/\D/g, "");
+  if (el.id === "c-avg") { maskMoney(el); D.avgTouched = true; }
+  if (["c-fire", "c-leave", "c-used", "c-prev", "c-avg"].includes(el.id)) updComp();
   if (el.id === "p-amt" || el.id === "d-amt") maskMoney(el);
   if (el.id === "o-amt") { maskMoney(el); updOther(); }
   if (el.id === "o-pinfl") el.value = el.value.replace(/\D/g, "");
