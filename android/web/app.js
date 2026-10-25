@@ -311,7 +311,7 @@ function applyTheme() {
 
 /* ---------- приветствие ---------- */
 function welcome() {
-  return '<div class="wel"><div class="logo">' + ICON.wallet + '</div><h1>Зарплата</h1>' +
+  return '<div class="wel"><div style="margin-bottom:22px">' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang") + '</div><div class="logo">' + ICON.wallet + '</div><h1>Зарплата</h1>' +
     '<p>Считает НДФЛ, ИНПС и ЕСП, показывает сумму «на руки» и готовит отчёты. Данные хранятся только на вашем телефоне.</p>' +
     '<label class="f"><span>Название компании</span><input class="in" id="w-name" placeholder="Например, ООО «Ромашка»" autocomplete="off"></label>' +
     '<label class="f"><span>ИНН (по желанию)</span><input class="in" id="w-inn" inputmode="numeric" maxlength="9" placeholder="9 цифр"></label>' +

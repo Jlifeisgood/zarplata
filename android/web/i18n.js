@@ -198,7 +198,7 @@
     [" сотр. нет ПИНФЛ — допишите в файле или в приложении", " xodimda JShShIR yo'q — faylda yoki ilovada to'ldiring"],
     ["Нет", "Yo'q"], ["Да", "Ha"],
     ["нажмите, чтобы изменить", "o'zgartirish uchun bosing"], ["за счёт работодателя", "ish beruvchi hisobidan"], ["выплата", "to'lov"], ["удержание", "ushlab qolish"],
-    ["ООО", "MChJ"], [" · принят ", " · qabul qilingan "], [" работает", " ishlaydi"], [" уволено", " bo'shagan"]
+    [" · принят ", " · qabul qilingan "], [" работает", " ishlaydi"], [" уволено", " bo'shagan"]
   ];
 
   // длинные фразы подставляются раньше коротких; короткие слова (до 4 букв) — только как отдельные слова
