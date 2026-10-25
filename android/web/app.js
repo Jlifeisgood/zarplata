@@ -50,7 +50,7 @@ const ICON = {
    список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
 const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [] };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [], pays: [], deds: [] };
 }
 function normalize(s) {
   if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
@@ -61,6 +61,8 @@ function normalize(s) {
   s.events = s.events || [];                       // отпуска и больничные: { id, emp, type: 'vac'|'sick', from, to, payYm, amount, ... }
   s.aids = s.aids || [];                           // прочие доходы физлиц: { id, emp (сотрудник или физлицо), ym, amount, kind }
   s.people = s.people || [];                       // физлица без трудового договора: { id, name, pinfl }
+  s.pays = s.pays || [];                           // выплаты: { id, emp, ym, amount, kind, date }
+  s.deds = s.deds || [];                           // удержания: { id, emp, ym, amount, kind, note }
   s.rules.holExtra = s.rules.holExtra || [];
   if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
   if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
@@ -292,14 +294,15 @@ function welcome() {
 
 /* ---------- вкладка «Зарплата» ---------- */
 function monthRows(ym) {
-  return S.emps.filter(e => empActive(e, ym)).map(e => { const c = calcEntry(e, ym); return { e, en: c.en, r: c.r, x: c.x }; })
+  return S.emps.filter(e => empActive(e, ym)).map(e => { const c = calcEntry(e, ym); return { e, en: c.en, r: c.r, x: c.x, p: payInfo(e, ym) }; })
     .sort((a, b) => (a.en.dept === b.en.dept ? 0 : a.en.dept === "aup" ? -1 : 1) || a.e.last.localeCompare(b.e.last, "ru"));
 }
 function payItem(x) {
   const { e, en, r } = x;
   const t = en.type === "gph" ? '<span class="badge warn">ГПХ</span>' : "";
   const part = en.day ? "неполный месяц: " + Math.max(0, en.day.worked - en.day.abs) + " из " + en.day.W + " раб. дн." : "";
-  const sub = en.skip ? "не начисляется в этом месяце" : (part || (e.pos ? esc(e.pos) + " · " : "") + "начислено " + fmt(r.gross)) + (x.x.extra ? " · отпускные" : "") + (x.x.sick ? " · больничный" : "");
+  const sub = en.skip ? "не начисляется в этом месяце" : (part || (e.pos ? esc(e.pos) + " · " : "") + "начислено " + fmt(r.gross)) + (x.x.extra ? " · отпускные" : "") + (x.x.sick ? " · больничный" : "") +
+    (!en.skip && x.p.due > 0 ? (x.p.left <= 0 ? " · выплачено" : x.p.paid > 0 ? " · осталось " + fmt(x.p.left) : "") : "");
   return '<button class="item ' + (en.skip ? "off" : "") + '" data-act="openPay" data-id="' + e.id + '"><div class="av ' + (S.company.split ? en.dept : "") + '">' + esc(initials(e)) + '</div>' +
     '<div class="grow"><div class="nm">' + esc(shortName(e)) + t + (en.custom && !en.skip ? '<span class="badge">изменено</span>' : en.day && !en.skip ? '<span class="badge warn">неполный</span>' : "") + '</div><div class="sb">' + sub + '</div></div>' +
     '<div class="r"><b class="num">' + (en.skip ? "—" : fmt(r.net)) + '</b><span>на руки</span></div></button>';
@@ -321,7 +324,9 @@ function viewPay() {
   h += '<div class="hero"><div class="lbl">К выплате на руки · ' + (list.filter(x => !x.en.skip).length) + ' чел.</div><div class="big num">' + fmt(T.net) + '<small>сум</small></div>' +
     '<div class="grid"><div>Начислено<b class="num">' + fmt(T.gross) + '</b></div><div>НДФЛ<b class="num">' + fmt(T.pit) + '</b></div>' +
     '<div>ИНПС<b class="num">' + fmt(T.inps) + '</b></div><div>ЕСП (работодатель)<b class="num">' + fmt(T.esp) + '</b></div></div>' +
-    '<div class="cost">Всего расход компании: <b class="num">' + fmt(T.cost) + '</b> сум</div></div>';
+    '<div class="cost">Всего расход компании: <b class="num">' + fmt(T.cost) + '</b> сум</div>' +
+    (() => { const ps = list.filter(x => !x.en.skip).map(x => x.p), due = ps.reduce((s, p) => s + p.due, 0), paid = ps.reduce((s, p) => s + p.paid, 0), left = ps.reduce((s, p) => s + Math.max(0, p.left), 0);
+      return '<div class="cost">Выплачено <b class="num">' + fmt(paid) + '</b> из <b class="num">' + fmt(due) + '</b> · осталось <b class="num">' + fmt(left) + '</b></div>'; })() + '</div>';
   if (S.company.split) {
     h += '<div class="sec"></div>' + seg("filter", ui.filter, [["all", "Все"], ["aup", "АУП"], ["prod", "Производство"]], "filter");
   }
@@ -334,6 +339,7 @@ function viewPay() {
       h += '<div class="sec" style="margin-top:14px"><span>' + deptName(d) + " · " + g.length + '</span><span class="tag num">' + fmt(gt.net) + ' на руки</span></div><div class="card">' + g.map(payItem).join("") + "</div>";
     });
   } else h += '<div class="card">' + list.map(payItem).join("") + "</div>";
+  h += '<div class="btns"><button class="btn sec2" data-act="registry">' + ICON.file + 'Реестр выплат (Excel)</button></div>';
   return h + "</div>";
 }
 
@@ -360,7 +366,7 @@ function openPay(id) {
     (en.day ? '<div class="hint">Неполный месяц: оклад пересчитан на ' + Math.max(0, en.day.worked - en.day.abs) + ' из ' + en.day.W + ' рабочих дней (по графику ' + empWd(e) + '-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.</div>' : "") +
     '<div class="btns"><button class="btn" data-act="savePay">Сохранить</button></div>' +
     '<div class="btns"><button class="btn sec2" data-act="slip">' + ICON.share + 'Расчётный листок</button></div>' +
-    evBlock(e) +
+    evBlock(e) + payBlock(e) +
     '<div class="btns">' + '<button class="btn ghost" data-act="skipPay">' + (en.skip ? "Начислять в этом месяце" : "Не начислять в этом месяце") + '</button>' +
     (en.custom ? '<button class="btn ghost" data-act="resetPay">Вернуть стандартную</button>' : "") + '</div>');
   updPreview();
@@ -399,8 +405,76 @@ function payslip(e) {
   }
   L.push("Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(C.rates(R, en.type).pit) + ": " + fmt(r.pit) + " сум");
   if (r.inps) L.push("ИНПС " + pct(R.inps) + (R.inpsInsidePit ? " (входит в НДФЛ)" : "") + ": " + fmt(r.inps) + " сум");
-  L.push("К выплате на руки: " + fmt(r.net) + " сум");
+  const pi = payInfo(e, ui.ym);
+  L.push("На руки: " + fmt(r.net) + " сум");
+  if (pi.ded) { (S.deds || []).filter(d => d.emp === e.id && d.ym === ui.ym).forEach(d => L.push("Удержано (" + dedKind(d.kind).toLowerCase() + "): " + fmt(d.amount) + " сум")); L.push("К выплате: " + fmt(pi.due) + " сум"); }
+  if (pi.paid) L.push("Уже выплачено: " + fmt(pi.paid) + " сум", "Осталось выплатить: " + fmt(Math.max(0, pi.left)) + " сум");
   return L.filter(x => x !== "" || true).join("\n");
+}
+
+/* ---------- выплаты и удержания ---------- */
+const PAY_KINDS = [["advance", "Аванс"], ["salary", "Зарплата"], ["other", "Другое"]];
+const DED_KINDS = [["alimony", "Алименты"], ["loan", "Ссуда / долг"], ["fine", "Штраф"], ["other", "Другое"]];
+const payKind = k => (PAY_KINDS.find(x => x[0] === k) || PAY_KINDS[2])[1];
+const dedKind = k => (DED_KINDS.find(x => x[0] === k) || DED_KINDS[3])[1];
+/* К выплате = «на руки» минус удержания (они не меняют налоги); остаток = к выплате минус уже выплаченное */
+function payInfo(e, ym) {
+  const { en, r } = calcEntry(e, ym);
+  if (en.skip) return { net: 0, ded: 0, due: 0, paid: 0, left: 0 };
+  const ded = (S.deds || []).filter(d => d.emp === e.id && d.ym === ym).reduce((s, d) => s + d.amount, 0);
+  const paid = (S.pays || []).filter(p => p.emp === e.id && p.ym === ym).reduce((s, p) => s + p.amount, 0);
+  const due = Math.max(0, r.net - ded);
+  return { net: r.net, ded, due, paid, left: due - paid };
+}
+const xBtn = (act, id) => '<button class="ib" data-act="' + act + '" data-id="' + id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>';
+function payBlock(e) {
+  const ym = ui.ym, pi = payInfo(e, ym);
+  const pays = (S.pays || []).filter(p => p.emp === e.id && p.ym === ym), deds = (S.deds || []).filter(d => d.emp === e.id && d.ym === ym);
+  let h = '<div class="sec" style="margin-top:18px">Выплаты и удержания</div><div class="calc">' +
+    '<div class="l"><span>На руки по расчёту</span><span class="num">' + fmt(pi.net) + '</span></div>' +
+    (pi.ded ? '<div class="l"><span>Удержания</span><span class="num">− ' + fmt(pi.ded) + '</span></div>' : "") +
+    '<div class="l"><span>К выплате</span><span class="num">' + fmt(pi.due) + '</span></div>' +
+    '<div class="l"><span>Выплачено</span><span class="num">' + fmt(pi.paid) + '</span></div>' +
+    '<div class="l t"><span>' + (pi.left < 0 ? "Выплачено лишнего" : "Осталось выплатить") + '</span><span class="num">' + fmt(Math.abs(pi.left)) + '</span></div></div>';
+  if (pays.length || deds.length) h += '<div class="card">' +
+    pays.map(p => '<div class="item"><div class="grow"><div class="nm">' + esc(payKind(p.kind)) + ' · ' + fmt(p.amount) + '</div><div class="sb">выплата' + (p.date ? " · " + esc(isoToDmy(p.date)) : "") + '</div></div>' + xBtn("delPay", p.id) + '</div>').join("") +
+    deds.map(d => '<div class="item"><div class="grow"><div class="nm">' + esc(dedKind(d.kind)) + ' · ' + fmt(d.amount) + '</div><div class="sb">удержание' + (d.note ? " · " + esc(d.note) : "") + '</div></div>' + xBtn("delDed", d.id) + '</div>').join("") + '</div>';
+  return h + '<div class="btns"><button class="btn sec2" data-act="payAdd">Выплата…</button><button class="btn sec2" data-act="dedAdd">Удержание…</button></div>';
+}
+function openPayAdd() {
+  const e = curDraftEmp(); if (!e) return;
+  const left = payInfo(e, ui.ym).left;
+  D = { kind: "payadd", id: e.id, pk: "advance" };
+  openSheet('<h2>Выплата</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
+    '<div class="f"><span>Вид</span>' + seg("pk", D.pk, [["advance", "Аванс"], ["salary", "Зарплата"], ["other", "Другое"]]) + '</div>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="p-amt" inputmode="numeric" value="' + (left > 0 ? fmt(left) : "") + '" autocomplete="off"></label>' +
+    dateField("p-date", todayIso(), "Дата выплаты") +
+    '<div class="stack"><button class="btn" data-act="savePayAdd">Записать</button></div>');
+}
+function openDedAdd() {
+  const e = curDraftEmp(); if (!e) return;
+  D = { kind: "dedadd", id: e.id, dk: "alimony" };
+  openSheet('<h2>Удержание</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
+    '<div class="f"><span>Вид</span><select class="in" id="d-kind">' + DED_KINDS.map(k => '<option value="' + k[0] + '">' + k[1] + '</option>').join("") + '</select></div>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="d-amt" inputmode="numeric" autocomplete="off"></label>' +
+    '<label class="f"><span>Комментарий</span><input class="in" id="d-note" autocomplete="off"></label>' +
+    '<div class="hint">Удерживается из суммы «на руки»; НДФЛ, ИНПС и соцналог не меняются.</div>' +
+    '<div class="stack"><button class="btn" data-act="saveDedAdd">Записать</button></div>');
+}
+/* Реестр выплат на месяц: кому сколько осталось перечислить (для банка / кассы) */
+function registryRows() {
+  return monthRows(ui.ym).filter(x => !x.en.skip).map(x => ({ e: x.e, p: payInfo(x.e, ui.ym) })).filter(x => x.p.due > 0 || x.p.paid > 0);
+}
+function exportRegistry() {
+  const rows = registryRows();
+  if (!rows.length) { toast("Нет начислений за месяц"); return; }
+  const sum = k => rows.reduce((s, x) => s + x.p[k], 0), d = new Date();
+  const body = rows.map(x => ({ t: "row", cells: [fullName(x.e), x.e.card || "—", x.p.due, x.p.paid, Math.max(0, x.p.left)] }));
+  body.push({ t: "tot", cells: ["ИТОГО", "", sum("due"), sum("paid"), rows.reduce((s, x) => s + Math.max(0, x.p.left), 0)] });
+  const b64 = window.buildReportXlsx({ company: S.company.name || "Организация", inn: "ИНН: " + (S.company.inn || "—"), period: ymLabel(ui.ym),
+    note: "Сформировано в приложении «Зарплата» " + pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear() + "." }, [{
+    name: "Реестр выплат", title: "Реестр выплат", head: ["Сотрудник", "Карта / счёт", "К выплате", "Уже выплачено", "К перечислению"], widths: [36, 24, 17, 17, 18], center: [1], body }]);
+  sendFile((coPrefix() ? coPrefix() + "_" : "") + "Реестр_выплат_" + ymLabel(ui.ym).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b64);
 }
 
 /* ---------- отпуска и больничные ---------- */
@@ -623,6 +697,7 @@ function openEmp(id) {
     '<label class="f"><span>Отчество</span><input class="in" id="f-mid" value="' + esc(v.mid) + '" autocomplete="off"></label></div>' +
     '<label class="f"><span>ПИНФЛ (14 цифр)</span><input class="in" id="f-pinfl" inputmode="numeric" maxlength="14" value="' + esc(v.pinfl) + '" placeholder="нужен для отчёта по НДФЛ"></label>' +
     '<label class="f"><span>Должность</span><input class="in" id="f-pos" value="' + esc(v.pos) + '" autocomplete="off"></label>' +
+    '<label class="f"><span>Карта или счёт для выплаты</span><input class="in" id="f-card" value="' + esc(v.card || "") + '" placeholder="для реестра выплат" autocomplete="off"></label>' +
     (S.company.split ? '<div class="f"><span>Отдел</span>' + seg("dept", D.dept, [["aup", "АУП"], ["prod", "Производство"]]) + '</div>' : "") +
     '<div class="f"><span>Договор</span>' + seg("type", D.type, [["trud", "Трудовой"], ["gph", "ГПХ"]]) + '</div>' +
     '<div class="f"><span>График работы</span>' + seg("wd", D.wd, [["5", "5-дневка"], ["6", "6-дневка"]]) + '</div>' +
@@ -664,7 +739,7 @@ function saveEmp() {
   if (fire && fire < hire) { toast("Дата увольнения раньше даты принятия"); return; }
   const rate = Number(g("f-rate").replace(",", ".")) || 1;
   const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to, fire, res: D.res, rate, wd: Number(D.wd) === 6 ? 6 : 5,
-    ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp };
+    ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), card: g("f-card"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
     if (e.amount !== amt || e.mode !== D.mode || e.type !== D.type || e.dept !== data.dept || (e.ben || "") !== data.ben) freezePast();
@@ -1058,6 +1133,20 @@ const ACT = {
     save(); closeSheet(); render();
   },
   vac: openVac, sick: openSick, saveVac: saveEvent, saveSick: saveEvent,
+  payAdd: openPayAdd, dedAdd: openDedAdd, registry: exportRegistry,
+  savePayAdd: () => {
+    const amt = parseAmt($("#p-amt").value), date = parseDmy($("#p-date").value);
+    if (!(amt > 0)) { $("#p-amt").classList.add("bad"); toast("Введите сумму"); return; }
+    if (!date) { $("#p-date").classList.add("bad"); toast("Дата в формате дд.мм.гггг"); return; }
+    const id = D.id; S.pays.push({ id: uid(), emp: id, ym: ui.ym, amount: amt, kind: D.pk, date }); save(); render(); openPay(id); toast("Выплата записана");
+  },
+  saveDedAdd: () => {
+    const amt = parseAmt($("#d-amt").value);
+    if (!(amt > 0)) { $("#d-amt").classList.add("bad"); toast("Введите сумму"); return; }
+    const id = D.id; S.deds.push({ id: uid(), emp: id, ym: ui.ym, amount: amt, kind: $("#d-kind").value, note: $("#d-note").value.trim() }); save(); render(); openPay(id); toast("Удержание записано");
+  },
+  delPay: t => { const id = D && D.id; S.pays = S.pays.filter(p => p.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
+  delDed: t => { const id = D && D.id; S.deds = S.deds.filter(d => d.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
   aid: openAid, others: openOthers, saveOther,
   delOther: t => {
     if (!confirmBox("Удалить эту запись о доходе?")) return;
@@ -1084,6 +1173,7 @@ const ACT = {
     S.emps = S.emps.filter(x => x.id !== e.id);
     S.events = (S.events || []).filter(ev => ev.emp !== e.id);
     S.aids = (S.aids || []).filter(a => a.emp !== e.id);
+    S.pays = (S.pays || []).filter(p => p.emp !== e.id); S.deds = (S.deds || []).filter(d => d.emp !== e.id);
     Object.values(S.months).forEach(m => { if (m.e) delete m.e[e.id]; });
     save(); closeSheet(); render(); toast("Удалено");
   },
@@ -1133,6 +1223,7 @@ document.addEventListener("input", ev => {
   if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
   if (el.id === "v-days" || el.id === "v-avg" || el.id === "s-avg") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; if (el.id !== "v-days") D.avgTouched = true; }
   if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
+  if (el.id === "p-amt" || el.id === "d-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; }
   if (el.id === "o-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updOther(); }
   if (el.id === "o-pinfl") el.value = el.value.replace(/\D/g, "");
   if (el.id === "a-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updAid(); }
