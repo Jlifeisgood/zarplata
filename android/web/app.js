@@ -50,7 +50,7 @@ const ICON = {
    список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
 const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [] };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [] };
 }
 function normalize(s) {
   if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
@@ -59,7 +59,8 @@ function normalize(s) {
   s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
   s.months = s.months || {};
   s.events = s.events || [];                       // отпуска и больничные: { id, emp, type: 'vac'|'sick', from, to, payYm, amount, ... }
-  s.aids = s.aids || [];                           // материальная помощь: { id, emp, ym, amount }
+  s.aids = s.aids || [];                           // прочие доходы физлиц: { id, emp (сотрудник или физлицо), ym, amount, kind }
+  s.people = s.people || [];                       // физлица без трудового договора: { id, name, pinfl }
   s.rules.holExtra = s.rules.holExtra || [];
   if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
   if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
@@ -162,11 +163,13 @@ function freezePast() {
 }
 /* Отпускные (оплата труда) и больничные за счёт работодателя, начисленные в месяце ym */
 /* Материальная помощь (ст. 377, 378 НК): не облагается НДФЛ в пределах 4,22 МРОТ за календарный год (МРОТ на 1 января), сверх — 12%; ИНПС и соцналога нет */
-function aidFor(e, ym) {
+const isAidKind = a => (a.kind || "aid") === "aid";
+function aidFor(e, ym) {   // все «прочие доходы» месяца сотрудника; необлагаемая часть — только у материальной помощи
   const y = ym.slice(0, 4), list = (S.aids || []).filter(a => a.emp === e.id && a.ym.slice(0, 4) === y && a.ym <= ym);
-  const before = list.filter(a => a.ym < ym).reduce((s, a) => s + a.amount, 0), now = list.filter(a => a.ym === ym).reduce((s, a) => s + a.amount, 0);
+  const sum = f => list.filter(f).reduce((s, a) => s + a.amount, 0);
+  const before = sum(a => isAidKind(a) && a.ym < ym), nowAid = sum(a => isAidKind(a) && a.ym === ym), nowAll = sum(a => a.ym === ym);
   const lim = C.r0(4.22 * mrotFor(y + "-01", S.rules));
-  return { aid: now, aidEx: Math.max(0, Math.min(before + now, lim) - Math.min(before, lim)), before, lim };
+  return { aid: nowAll, aidEx: Math.max(0, Math.min(before + nowAid, lim) - Math.min(before, lim)), before, nowAid, lim };
 }
 function evExtras(e, ym) {
   let extra = 0, sick = 0;
@@ -428,9 +431,9 @@ function updAid() {
   const el = $("#hr-prev"); if (!el || !D || D.kind !== "aid") return;
   const e = curDraftEmp(), amt = parseAmt($("#a-amt").value), a = aidFor(e, ui.ym), pit = S.rules.pit;
   D.amt = amt;
-  const free = Math.max(0, a.lim - a.before - a.aid), ex = Math.min(amt, free), tax = C.r0((amt - ex) * pit / 100);
+  const free = Math.max(0, a.lim - a.before - a.nowAid), ex = Math.min(amt, free), tax = C.r0((amt - ex) * pit / 100);
   el.innerHTML = '<div class="calc"><div class="l"><span>Предел без налога за ' + ui.ym.slice(0, 4) + ' год (4,22 МРОТ)</span><span class="num">' + fmt(a.lim) + '</span></div>' +
-    '<div class="l"><span>Уже выплачено в этом году</span><span class="num">' + fmt(a.before + a.aid) + '</span></div>' +
+    '<div class="l"><span>Уже выплачено в этом году</span><span class="num">' + fmt(a.before + a.nowAid) + '</span></div>' +
     '<div class="l"><span>Не облагается налогом</span><span class="num">' + fmt(ex) + '</span></div>' +
     '<div class="l t"><span>НДФЛ ' + pct(pit) + ' с остатка</span><span class="num">' + fmt(tax) + '</span></div></div>' +
     '<div class="hint">Материальная помощь облагается только НДФЛ, ИНПС и соцналога нет (ст. 377, 378 НК). Предел считается по МРОТ на 1 января.</div>';
@@ -507,6 +510,77 @@ function saveEvent() {
   ui.ym = ev.type === "vac" ? ui.ym : ui.ym; openPay(id); toast("Добавлено в начисления");
 }
 
+/* ---------- прочие доходы физлиц (приложение 5): аренда, имущественные, материальная выгода, материальная помощь ---------- */
+const OTHER_KINDS = [["aid", "Материальная помощь", 5], ["rent", "Аренда (не через E-ijara)", 2], ["prop", "Имущественный доход (ст. 375)", 1], ["benefit", "Материальная выгода (ст. 376)", 3], ["other", "Прочий доход (ст. 377)", 5]];
+const kindName = k => (OTHER_KINDS.find(x => x[0] === (k || "aid")) || OTHER_KINDS[0])[1];
+const kindCode = k => (OTHER_KINDS.find(x => x[0] === (k || "aid")) || OTHER_KINDS[0])[2];
+function recipient(id) {
+  const e = S.emps.find(x => x.id === id);
+  if (e) return { name: fullName(e), pinfl: e.pinfl, res: e.res || "1", emp: true };
+  const p = (S.people || []).find(x => x.id === id);
+  return p ? { name: p.name, pinfl: p.pinfl, res: "1", emp: false } : { name: "(удалён)", pinfl: "", res: "1", emp: false };
+}
+/* Сводка по получателям и видам дохода на конец месяца last (нарастающим итогом с января) и за сам месяц; НДФЛ по общей ставке, без ИНПС и соцналога */
+function othersAgg(last) {
+  const y = last.slice(0, 4), prev = last.slice(5) === "01" ? null : addYm(last, -1), lim = C.r0(4.22 * mrotFor(y + "-01", S.rules)), pit = S.rules.pit;
+  const groups = new Map();
+  (S.aids || []).filter(a => a.ym.slice(0, 4) === y && a.ym <= last).forEach(a => { const k = a.emp + "|" + (a.kind || "aid"); (groups.get(k) || groups.set(k, []).get(k)).push(a); });
+  const rows = [];
+  groups.forEach((list, k) => {
+    const [rid, kind] = k.split("|"), r = recipient(rid);
+    const at = ym => { const cum = list.filter(a => a.ym <= ym).reduce((s, a) => s + a.amount, 0), ex = kind === "aid" ? Math.min(cum, lim) : 0; return { cum, ex, tax: C.r0((cum - ex) * pit / 100) }; };
+    const c = at(last), p = prev ? at(prev) : { cum: 0, ex: 0, tax: 0 };
+    rows.push({ rid, kind, r, cum: c.cum, mon: c.cum - p.cum, cumEx: c.ex, monEx: c.ex - p.ex, cumTax: c.tax, monTax: c.tax - p.tax });
+  });
+  return rows.filter(x => x.cum > 0).sort((a, b) => a.r.name.localeCompare(b.r.name, "ru"));
+}
+function openOthers() {
+  const ym = ui.ym, list = (S.aids || []).filter(a => a.ym === ym);
+  D = { kind: "others", split: false };
+  const opts = '<option value="">Выберите получателя…</option>' + '<option value="__new">+ Новое физлицо</option>' +
+    (S.people.length ? '<optgroup label="Физлица">' + S.people.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join("") + '</optgroup>' : "") +
+    '<optgroup label="Сотрудники">' + S.emps.map(e => '<option value="' + e.id + '">' + esc(fullName(e)) + '</option>').join("") + '</optgroup>';
+  openSheet('<h2>Прочие доходы физлиц</h2><p class="sub">' + esc(ymLabel(ym)) + ' · НДФЛ с них считается отдельно, соцналога и ИНПС нет</p>' +
+    (list.length ? '<div class="card">' + list.map(a => '<div class="item"><div class="grow"><div class="nm">' + esc(recipient(a.emp).name) + '</div><div class="sb">' + esc(kindName(a.kind)) + ' · ' + fmt(a.amount) + ' сум</div></div>' +
+      '<button class="ib" data-act="delOther" data-id="' + a.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + '</div><div style="height:14px"></div>' : "") +
+    '<label class="f"><span>Кому</span><select class="in" id="o-who">' + opts + '</select></label>' +
+    '<div id="o-new" style="display:none"><label class="f"><span>ФИО</span><input class="in" id="o-name" autocomplete="off"></label>' +
+    '<label class="f"><span>ПИНФЛ (14 цифр)</span><input class="in" id="o-pinfl" inputmode="numeric" maxlength="14"></label></div>' +
+    '<label class="f"><span>Вид дохода</span><select class="in" id="o-kind">' + OTHER_KINDS.map(k => '<option value="' + k[0] + '">' + k[1] + '</option>').join("") + '</select></label>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="o-amt" inputmode="numeric" autocomplete="off"></label>' +
+    '<div id="hr-prev"></div><div class="hint">Аренда, поставленная на учёт в E-ijara, в отчёт вручную не вносится — налоговая берёт её сама.</div>' +
+    '<div class="stack"><button class="btn" data-act="saveOther">Добавить</button></div>');
+  updOther();
+}
+function updOther() {
+  const el = $("#hr-prev"); if (!el || !D || D.kind !== "others") return;
+  const who = $("#o-who").value, kind = $("#o-kind").value, amt = parseAmt($("#o-amt").value);
+  $("#o-new").style.display = who === "__new" ? "block" : "none";
+  const pit = S.rules.pit, lim = C.r0(4.22 * mrotFor(ui.ym.slice(0, 4) + "-01", S.rules));
+  let ex = 0;
+  if (kind === "aid") {
+    const before = who && who !== "__new" ? (S.aids || []).filter(a => a.emp === who && isAidKind(a) && a.ym.slice(0, 4) === ui.ym.slice(0, 4) && a.ym <= ui.ym).reduce((s, a) => s + a.amount, 0) : 0;
+    ex = Math.min(amt, Math.max(0, lim - before));
+  }
+  const tax = C.r0((amt - ex) * pit / 100);
+  el.innerHTML = amt > 0 ? '<div class="calc">' + (ex ? '<div class="l"><span>Не облагается (до 4,22 МРОТ в год)</span><span class="num">' + fmt(ex) + '</span></div>' : "") +
+    '<div class="l t"><span>НДФЛ ' + pct(pit) + '</span><span class="num">' + fmt(tax) + '</span></div><div class="l"><span>Получатель получит</span><span class="num">' + fmt(amt - tax) + '</span></div></div>' : "";
+}
+function saveOther() {
+  const who = $("#o-who").value, amt = parseAmt($("#o-amt").value), kind = $("#o-kind").value;
+  if (!who) { $("#o-who").classList.add("bad"); toast("Выберите получателя"); return; }
+  if (!(amt > 0)) { $("#o-amt").classList.add("bad"); toast("Введите сумму"); return; }
+  let rid = who;
+  if (who === "__new") {
+    const name = $("#o-name").value.trim(), pinfl = $("#o-pinfl").value.replace(/\D/g, "");
+    if (!name) { $("#o-name").classList.add("bad"); toast("Введите ФИО"); return; }
+    if (pinfl && pinfl.length !== 14) { $("#o-pinfl").classList.add("bad"); toast("ПИНФЛ — ровно 14 цифр"); return; }
+    rid = uid(); S.people.push({ id: rid, name, pinfl });
+  }
+  S.aids.push({ id: uid(), emp: rid, ym: ui.ym, amount: amt, kind });
+  save(); render(); openOthers(); toast("Добавлено");
+}
+
 /* ---------- вкладка «Сотрудники» ---------- */
 function empItem(e) {
   const cur = curYm(), ym = e.to && e.to < cur ? e.to : cur, en = entryFor(e, ym);
@@ -530,6 +604,7 @@ function viewTeam() {
       if (g.length) h += '<div class="sec"><span>' + deptName(d) + " · " + g.length + '</span></div><div class="card">' + g.map(empItem).join("") + "</div>";
     });
   } else h += '<div class="sec" style="margin-top:10px"></div><div class="card">' + act.sort(byName).map(empItem).join("") + "</div>";
+  h += '<div class="sec">Прочие доходы</div><button class="btn sec2" data-act="others">Аренда, материальная помощь и другие доходы физлиц…</button>';
   if (old.length) {
     h += '<div class="sec"><span>Уволенные · ' + old.length + '</span><button class="tag" style="color:var(--pri)" data-act="toggleOld">' + (ui.showOld ? "скрыть" : "показать") + '</button></div>';
     if (ui.showOld) h += '<div class="card">' + old.sort(byName).map(empItem).join("") + "</div>";
@@ -698,7 +773,12 @@ function soliqHelp() {
   const line = (a, b) => '<div class="l"><span>' + a + '</span><span class="num">' + b + '</span></div>';
   const itCum = rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick - x.aid, 0);
   const itMon = mon.rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick - x.aid, 0);
-  let h = '<div class="sec">Вносится вручную в основной расчёт · ' + esc(ymLabel(last)) + '</div><div class="calc">' +
+  const oth = othersAgg(last).filter(x => !x.r.emp);
+  let h = (oth.length ? '<div class="sec">Доходы физлиц без трудового договора · ' + esc(ymLabel(last)) + '</div><div class="calc">' +
+    '<div class="l"><span>Выплачено с начала года</span><span class="num">' + fmt(oth.reduce((s, x) => s + x.cum, 0)) + '</span></div>' +
+    '<div class="l"><span>НДФЛ за месяц (платится сверх зарплатного)</span><span class="num">' + fmt(oth.reduce((s, x) => s + x.monTax, 0)) + '</span></div>' +
+    '<div class="l"><span>НДФЛ с начала года</span><span class="num">' + fmt(oth.reduce((s, x) => s + x.cumTax, 0)) + '</span></div></div>' : "") +
+    '<div class="sec">Вносится вручную в основной расчёт · ' + esc(ymLabel(last)) + '</div><div class="calc">' +
     line("Количество работников", rows.length) +
     line("ИНПС за месяц", fmt(mon.tot.inps)) + line("ИНПС с начала года", fmt(cum.tot.inps)) +
     line("Ставка социального налога", pct(R.budget ? R.espBudget : R.esp) + (it ? " (у IT Park по трудовым — льгота)" : "")) + '</div>';
@@ -752,11 +832,10 @@ function exportSoliq() {
     return row;
   });
   // приложение 5: материальная помощь (вид дохода 5 — прочие), необлагаемая часть — льгота (ст. 378)
-  const aidRows = cum.rows.filter(x => x.aid > 0).map((x, i) => {
-    const e = x.e, m = mon.get(e.id) || ZERO();
-    return [i + 1, fullName(e), e.pinfl || null, Number(e.res || 1), x.aid, m.aid, 5, x.aidPit, m.aidPit]
-      .concat(x.aidEx > 0 ? [S.rules.benIdAid || null, x.aidEx, m.aidEx] : []);
-  });
+  const oth = othersAgg(last);
+  const aidRows = oth.map((x, i) => [i + 1, x.r.name, x.r.pinfl || null, Number(x.r.res || 1), x.cum, x.mon, kindCode(x.kind), x.cumTax, x.monTax]
+    .concat(x.cumEx > 0 ? [S.rules.benIdAid || null, x.cumEx, x.monEx] : []));
+  if (oth.some(x => !x.r.pinfl)) setTimeout(() => toast("В приложении 5 у некоторых получателей нет ПИНФЛ"), 3000);
   const noPin = cum.rows.filter(x => !x.e.pinfl).length;
   const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId && !S.rules.benId).length;
   if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (карточка сотрудника)"), 4200);
@@ -978,7 +1057,11 @@ const ACT = {
     save(); closeSheet(); render();
   },
   vac: openVac, sick: openSick, saveVac: saveEvent, saveSick: saveEvent,
-  aid: openAid,
+  aid: openAid, others: openOthers, saveOther,
+  delOther: t => {
+    if (!confirmBox("Удалить эту запись о доходе?")) return;
+    S.aids = S.aids.filter(a => a.id !== t.dataset.id); save(); render(); openOthers();
+  },
   saveAid: () => {
     if (!D || !(D.amt > 0)) { toast("Введите сумму"); return; }
     const id = D.id; S.aids.push({ id: uid(), emp: id, ym: ui.ym, amount: D.amt }); save(); render(); openPay(id); toast("Добавлено в начисления");
@@ -1049,10 +1132,13 @@ document.addEventListener("input", ev => {
   if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
   if (el.id === "v-days" || el.id === "v-avg" || el.id === "s-avg") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; if (el.id !== "v-days") D.avgTouched = true; }
   if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
+  if (el.id === "o-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updOther(); }
+  if (el.id === "o-pinfl") el.value = el.value.replace(/\D/g, "");
   if (el.id === "a-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updAid(); }
   if (el.id === "f-amt") {
     const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; el.classList.remove("bad"); updPreview();
   } else if (el.id === "f-ben") updPreview();
+  else if (el.id === "o-who" || el.id === "o-kind") updOther();
   else if (el.id === "f-pinfl" || el.id === "w-inn" || el.id === "c-inn" || el.id === "n-inn") el.value = el.value.replace(/\D/g, "");
   else if (el.id === "c-name") { S.company.name = el.value; save(); }
   if (el.id === "c-inn") { S.company.inn = el.value; save(); }
