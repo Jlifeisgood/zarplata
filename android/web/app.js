@@ -518,7 +518,7 @@ function recipient(id) {
   const e = S.emps.find(x => x.id === id);
   if (e) return { name: fullName(e), pinfl: e.pinfl, res: e.res || "1", emp: true };
   const p = (S.people || []).find(x => x.id === id);
-  return p ? { name: p.name, pinfl: p.pinfl, res: "1", emp: false } : { name: "(удалён)", pinfl: "", res: "1", emp: false };
+  return p ? { name: p.name, pinfl: p.pinfl, res: p.res || "1", emp: false } : { name: "(удалён)", pinfl: "", res: "1", emp: false };
 }
 /* Сводка по получателям и видам дохода на конец месяца last (нарастающим итогом с января) и за сам месяц; НДФЛ по общей ставке, без ИНПС и соцналога */
 function othersAgg(last) {
@@ -541,11 +541,12 @@ function openOthers() {
     (S.people.length ? '<optgroup label="Физлица">' + S.people.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join("") + '</optgroup>' : "") +
     '<optgroup label="Сотрудники">' + S.emps.map(e => '<option value="' + e.id + '">' + esc(fullName(e)) + '</option>').join("") + '</optgroup>';
   openSheet('<h2>Прочие доходы физлиц</h2><p class="sub">' + esc(ymLabel(ym)) + ' · НДФЛ с них считается отдельно, соцналога и ИНПС нет</p>' +
-    (list.length ? '<div class="card">' + list.map(a => '<div class="item"><div class="grow"><div class="nm">' + esc(recipient(a.emp).name) + '</div><div class="sb">' + esc(kindName(a.kind)) + ' · ' + fmt(a.amount) + ' сум</div></div>' +
+    (list.length ? '<div class="card">' + list.map(a => '<div class="item"><div class="grow"><div class="nm">' + esc(recipient(a.emp).name) + '</div><div class="sb">' + esc(kindName(a.kind)) + ' · ' + fmt(a.amount) + ' сум' + (recipient(a.emp).res === "2" ? " · нерезидент" : "") + '</div></div>' +
       '<button class="ib" data-act="delOther" data-id="' + a.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + '</div><div style="height:14px"></div>' : "") +
     '<label class="f"><span>Кому</span><select class="in" id="o-who">' + opts + '</select></label>' +
     '<div id="o-new" style="display:none"><label class="f"><span>ФИО</span><input class="in" id="o-name" autocomplete="off"></label>' +
-    '<label class="f"><span>ПИНФЛ (14 цифр)</span><input class="in" id="o-pinfl" inputmode="numeric" maxlength="14"></label></div>' +
+    '<label class="f"><span>ПИНФЛ (14 цифр)</span><input class="in" id="o-pinfl" inputmode="numeric" maxlength="14"></label>' +
+    '<label class="f"><span>Статус</span><select class="in" id="o-res"><option value="1">Резидент</option><option value="2">Нерезидент (иностранец, меньше 183 дней в году)</option></select></label></div>' +
     '<label class="f"><span>Вид дохода</span><select class="in" id="o-kind">' + OTHER_KINDS.map(k => '<option value="' + k[0] + '">' + k[1] + '</option>').join("") + '</select></label>' +
     '<label class="f"><span>Сумма, сум</span><input class="in amt" id="o-amt" inputmode="numeric" autocomplete="off"></label>' +
     '<div id="hr-prev"></div><div class="hint">Аренда, поставленная на учёт в E-ijara, в отчёт вручную не вносится — налоговая берёт её сама.</div>' +
@@ -575,7 +576,7 @@ function saveOther() {
     const name = $("#o-name").value.trim(), pinfl = $("#o-pinfl").value.replace(/\D/g, "");
     if (!name) { $("#o-name").classList.add("bad"); toast("Введите ФИО"); return; }
     if (pinfl && pinfl.length !== 14) { $("#o-pinfl").classList.add("bad"); toast("ПИНФЛ — ровно 14 цифр"); return; }
-    rid = uid(); S.people.push({ id: rid, name, pinfl });
+    rid = uid(); S.people.push({ id: rid, name, pinfl, res: $("#o-res").value });
   }
   S.aids.push({ id: uid(), emp: rid, ym: ui.ym, amount: amt, kind });
   save(); render(); openOthers(); toast("Добавлено");
