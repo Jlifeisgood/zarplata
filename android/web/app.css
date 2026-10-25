@@ -176,3 +176,13 @@ details.more[open] summary{border-bottom:1px solid var(--line);margin-bottom:12p
 .co{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:5px 10px 5px 12px;border-radius:99px;background:var(--soft);color:var(--pri);font-weight:600;font-size:14px;vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .co:active{filter:brightness(.95)}
 .co .n{background:var(--pri);color:var(--pri-ink);border-radius:99px;font-size:11px;padding:0 6px;line-height:17px}
+/* табель */
+.tgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin:6px 0 10px}
+.tgrid .th{text-align:center;font-size:12px;color:var(--mute);font-weight:600;padding:2px 0}
+.td{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:46px;border-radius:12px;background:var(--card);box-shadow:var(--shadow);font-size:14px;color:var(--ink)}
+.td b{font-weight:650;line-height:1.1}.td i{font-style:normal;font-size:11px;font-weight:700;line-height:1.1;min-height:12px}
+.td.off,.td.out{background:transparent;box-shadow:none;color:var(--mute);opacity:.55}
+.td.abs{background:var(--badbg);color:var(--bad)}.td.unp{background:var(--warnbg);color:var(--warn)}.td.trip{background:var(--okbg);color:var(--ok)}
+.td.vac{background:var(--soft);color:var(--pri)}.td.sick{background:var(--badbg);color:var(--bad);opacity:.8}
+.tlegend{font-size:13px;color:var(--mute);margin:0 0 12px;line-height:2}
+.tlegend .td{display:inline-flex;min-height:0;width:26px;height:22px;border-radius:7px;font-size:11px;font-weight:700;vertical-align:middle;margin:0 2px 0 6px}

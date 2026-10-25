@@ -62,7 +62,7 @@ const ICON = {
    список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
 const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [], pays: [], deds: [] };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [], pays: [], deds: [], marks: [] };
 }
 function normalize(s) {
   if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
@@ -73,6 +73,7 @@ function normalize(s) {
   s.events = s.events || [];                       // отпуска и больничные: { id, emp, type: 'vac'|'sick', from, to, payYm, amount, ... }
   s.aids = s.aids || [];                           // прочие доходы физлиц: { id, emp (сотрудник или физлицо), ym, amount, kind }
   s.people = s.people || [];                       // физлица без трудового договора: { id, name, pinfl }
+  s.marks = s.marks || [];                         // табель: { emp, d: 'ГГГГ-ММ-ДД', c: 'abs' | 'unp' | 'trip' }
   s.pays = s.pays || [];                           // выплаты: { id, emp, ym, amount, kind, date }
   s.deds = s.deds || [];                           // удержания: { id, emp, ym, amount, kind, note }
   s.rules.holExtra = s.rules.holExtra || [];
@@ -125,6 +126,12 @@ function dayInfo(e, ym) {
     if (ev.emp !== e.id || ev.type === "comp") return;
     const a = ev.from > from ? ev.from : from, b = ev.to < to ? ev.to : to;
     if (a <= b) abs += HR.workDays(ym, wd, ex, a, b);
+  });
+  // табель: прогул и отпуск без сохранения зарплаты не оплачиваются (командировка оплачивается — отметка справочная)
+  (S.marks || []).forEach(k => {
+    if (k.emp !== e.id || k.c === "trip" || k.d < from || k.d > to || k.d.slice(0, 7) !== ym || !HR.isWorkDay(k.d, wd, ex)) return;
+    if ((S.events || []).some(ev => ev.emp === e.id && ev.type !== "comp" && k.d >= ev.from && k.d <= ev.to)) return;
+    abs++;
   });
   const frac = W ? Math.max(0, Math.min(1, (worked - abs) / W)) : 1;
   return { W, worked, abs, frac };
@@ -424,6 +431,62 @@ function payslip(e) {
   return L.filter(x => x !== "" || true).join("\n");
 }
 
+/* ---------- табель ---------- */
+const MARKS = [["abs", "П", "Прогул", "не оплачивается"], ["unp", "Б", "За свой счёт", "без сохранения зарплаты"], ["trip", "К", "Командировка", "оплачивается"]];
+const TAB_ORDER = [null, "abs", "unp", "trip"];
+function tabState(e, d) {
+  const hire = e.hire || e.from + "-01";
+  if (d < hire || (e.fire && d > e.fire)) return "out";
+  const ev = (S.events || []).find(v => v.emp === e.id && v.type !== "comp" && d >= v.from && d <= v.to);
+  if (ev) return ev.type === "vac" ? "vac" : "sick";
+  if (!HR.isWorkDay(d, empWd(e), S.rules.holExtra || [])) return "off";
+  const k = (S.marks || []).find(x => x.emp === e.id && x.d === d);
+  return k ? k.c : "work";
+}
+function tabGrid(e) {
+  const ym = ui.ym, last = +monthEnd(ym).slice(8), first = new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).getDay(), lead = (first + 6) % 7;
+  let h = '<div class="tgrid">' + ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map(x => '<div class="th">' + x + '</div>').join("") + '<div></div>'.repeat(lead);
+  for (let d = 1; d <= last; d++) {
+    const date = ym + "-" + pad(d), st = tabState(e, date), m = MARKS.find(x => x[0] === st);
+    const lab = m ? m[1] : st === "vac" ? "О" : st === "sick" ? "Бл" : "";
+    h += '<button type="button" class="td ' + st + '" data-act="mark" data-d="' + date + '"><b>' + d + '</b><i>' + lab + '</i></button>';
+  }
+  return h + "</div>";
+}
+function tabSummary(e) {
+  const di = dayInfo(e, ui.ym), en = entryFor(e, ui.ym), marks = (S.marks || []).filter(k => k.emp === e.id && k.d.slice(0, 7) === ui.ym);
+  const cnt = c => marks.filter(k => k.c === c && tabState(e, k.d) === c).length;
+  return '<div class="calc"><div class="l"><span>Рабочих дней по графику (' + empWd(e) + '-дневка)</span><span class="num">' + di.W + '</span></div>' +
+    '<div class="l"><span>Прогулов</span><span class="num">' + cnt("abs") + '</span></div><div class="l"><span>За свой счёт</span><span class="num">' + cnt("unp") + '</span></div>' +
+    '<div class="l"><span>Командировка (оплачивается)</span><span class="num">' + cnt("trip") + '</span></div>' +
+    '<div class="l t"><span>Оплачивается дней</span><span class="num">' + Math.max(0, di.worked - di.abs) + ' из ' + di.W + '</span></div>' +
+    '<div class="l"><span>Оклад за месяц</span><span class="num">' + fmt(en.amount) + '</span></div></div>';
+}
+function openTabel() {
+  const e = curDraftEmp(); if (!e) return;
+  D = { kind: "tabel", id: e.id };
+  openSheet('<h2>Табель</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
+    '<div class="hint" style="margin-top:0">Нажимайте на день: прогул → за свой счёт → командировка → рабочий. Выходные и праздники отмечены сами, отпуск и больничный берутся из карточки.</div>' +
+    '<div id="tab-grid"></div><div class="tlegend"><span class="td abs">П</span> прогул <span class="td unp">Б</span> за свой счёт <span class="td trip">К</span> командировка <span class="td vac">О</span> отпуск <span class="td sick">Бл</span> больничный</div>' +
+    '<div id="tab-sum"></div><div class="stack"><button class="btn" data-act="tabDone">Готово</button></div>');
+  updTabel();
+}
+function updTabel() {
+  const e = curDraftEmp(); if (!e || !$("#tab-grid")) return;
+  $("#tab-grid").innerHTML = tabGrid(e); $("#tab-sum").innerHTML = tabSummary(e);
+}
+function markDay(date) {
+  const e = curDraftEmp(); if (!e) return;
+  const st = tabState(e, date);
+  if (st === "out") { toast("Вне периода работы"); return; }
+  if (st === "off") { toast("Выходной или праздничный день"); return; }
+  if (st === "vac" || st === "sick") { toast("Это отпуск или больничный — измените в карточке сотрудника"); return; }
+  const cur = st === "work" ? null : st, next = TAB_ORDER[(TAB_ORDER.indexOf(cur) + 1) % TAB_ORDER.length];
+  S.marks = (S.marks || []).filter(x => !(x.emp === e.id && x.d === date));
+  if (next) S.marks.push({ emp: e.id, d: date, c: next });
+  save(); updTabel(); render();
+}
+
 /* ---------- выплаты и удержания ---------- */
 const PAY_KINDS = [["advance", "Аванс"], ["salary", "Зарплата"], ["other", "Другое"]];
 const DED_KINDS = [["alimony", "Алименты"], ["loan", "Ссуда / долг"], ["fine", "Штраф"], ["other", "Другое"]];
@@ -503,7 +566,8 @@ function evBlock(e) {
     '<button class="ib" data-act="delAid" data-id="' + a.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + "</div>";
   if (entryFor(e, ui.ym).type === "gph") return h + '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button></div><div class="hint">Для договора ГПХ отпуск и больничный не начисляются.</div>';
   return h + '<div class="btns"><button class="btn sec2" data-act="vac">Отпускные…</button><button class="btn sec2" data-act="sick">Больничный…</button></div>' +
-    '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button><button class="btn sec2" data-act="comp">При увольнении…</button></div>';
+    '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button><button class="btn sec2" data-act="comp">При увольнении…</button></div>' +
+    '<div class="btns"><button class="btn sec2" data-act="tabel">Табель месяца…</button></div>';
 }
 /* Расчёт при увольнении: компенсация за неиспользованный отпуск (ТК ст. 234, 223, 224) */
 function openComp() {
@@ -1198,6 +1262,7 @@ const ACT = {
   delPay: t => { const id = D && D.id; S.pays = S.pays.filter(p => p.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
   delDed: t => { const id = D && D.id; S.deds = S.deds.filter(d => d.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
   comp: openComp, saveComp,
+  tabel: openTabel, mark: t => markDay(t.dataset.d), tabDone: () => { const id = D && D.id; closeSheet(); if (id) openPay(id); },
   aid: openAid, others: openOthers, saveOther,
   delOther: t => {
     if (!confirmBox("Удалить эту запись о доходе?")) return;
@@ -1225,6 +1290,7 @@ const ACT = {
     S.events = (S.events || []).filter(ev => ev.emp !== e.id);
     S.aids = (S.aids || []).filter(a => a.emp !== e.id);
     S.pays = (S.pays || []).filter(p => p.emp !== e.id); S.deds = (S.deds || []).filter(d => d.emp !== e.id);
+    S.marks = (S.marks || []).filter(k => k.emp !== e.id);
     Object.values(S.months).forEach(m => { if (m.e) delete m.e[e.id]; });
     save(); closeSheet(); render(); toast("Удалено");
   },
