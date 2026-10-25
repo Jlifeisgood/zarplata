@@ -18,7 +18,7 @@ let cnt = 0;
 for (const inside of [true, false]) for (const type of ["trud", "gph"]) for (const benefit of [0, 1.41, 3]) for (let net = 0; net < 20000000; net += 12345) {
   const Rr = { ...R, inpsInsidePit: inside, inpsGph: !inside }, p = { amount: net, mode: "net", type, benefit }, r = calc(p, Rr); cnt++;
   if (r.net !== net) { eq(r.net, net, "net " + net + inside + type + benefit); break; }
-  if (r.gross > 0 && calc({ amount: r.gross - 1, mode: "gross", type, benefit }, Rr).net >= net) { eq(0, 1, "minimal gross " + net + type + benefit); break; }
+  if (r.gross > 0 && calc({ amount: r.gross - 0.01, mode: "gross", type, benefit }, Rr).net >= net) { eq(0, 1, "minimal gross " + net + type + benefit); break; }
 }
 eq(calc({ amount: 1000000, mode: "gross", type: "trud" }, { ...R, budget: true }).esp, 250000, "budget");
 const IT = { ...R, itpark: true };
@@ -36,7 +36,7 @@ eq(calc({ amount: 1000000, mode: "gross", type: "gph" }, IT), calc({ amount: 100
 for (let net = 0; net < 20000000; net += 54321) { const r = calc({ amount: net, mode: "net", type: "trud" }, IT); if (r.net !== net) { eq(r.net, net, "itpark reverse " + net); break; } }
 // льгота ст. 380: 1,41 МРОТ = 1 917 600 не облагается
 const b = calc({ amount: 5000000, mode: "gross", type: "trud", benefit: 1.41 }, R);
-eq([b.exempt, b.pit, b.inps, b.pitBudget, b.net, b.esp], [1917600, 369888, 3082, 366806, 4630112, 600000], "ст.380 1,41");
+eq([b.exempt, b.pit, b.inps, b.pitBudget, b.net, b.esp], [1917600, 369888, 3082.4, 366805.6, 4630112, 600000], "ст.380 1,41");
 const b2 = calc({ amount: 1500000, mode: "gross", type: "trud", benefit: 1.41 }, R);
 eq([b2.exempt, b2.pit, b2.net], [1500000, 0, 1500000], "ст.380: доход меньше лимита");
 const b3 = calc({ amount: 5000000, mode: "gross", type: "gph", benefit: 3 }, R);
@@ -45,12 +45,15 @@ eq(b3.exempt, 0, "ст.380 не для ГПХ");
 const a1 = calc({ amount: 5000000, mode: "gross", type: "trud", aid: 3000000, aidExempt: 5363620 }, R);
 eq([a1.gross, a1.aid, a1.aidPit, a1.pit, a1.inps, a1.esp, a1.net], [8000000, 3000000, 0, 600000, 5000, 600000, 7400000], "мат. помощь в пределах льготы");
 const a2 = calc({ amount: 5000000, mode: "gross", type: "trud", aid: 6000000, aidExempt: 5363620 }, R);
-eq([a2.aidPit, a2.pit, a2.net, a2.esp], [76366, 676366, 10323634, 600000], "мат. помощь сверх лимита облагается 12%");
+eq([a2.aidPit, a2.pit, a2.net, a2.esp], [76365.6, 676365.6, 10323634.4, 600000], "мат. помощь сверх лимита облагается 12%");
+// тийины: ГПХ 100 000 000 на руки → начислено 113 636 363,64, НДФЛ 13 636 363,64
+const g100 = calc({ amount: 100000000, mode: "net", type: "gph" }, R);
+eq([g100.gross, g100.pit, g100.net, g100.inps, g100.esp], [113636363.64, 13636363.64, 100000000, 113636.36, 13636363.64], "ГПХ 100 млн на руки (тийины)");
 // кадровые расчёты
 const HR = window.HR;
 // пример из kadry.uz: 03–23.07.2026, 21 день, 3 воскресенья, 6 000 000 → 6 000 000 / 25,3 × 18 = 4 268 775
 const v = HR.vacation({ start: "2026-07-03", days: 21, avg: 6000000 });
-eq([v.end, v.sun, v.hol, v.paid, v.pay], ["2026-07-23", 3, 0, 18, 4268775], "отпускные (пример)");
+eq([v.end, v.sun, v.hol, v.paid, v.pay], ["2026-07-23", 3, 0, 18, 4268774.7], "отпускные (пример)");
 // рабочих дней: октябрь 2026, 5-дневка = 22 − праздник 01.10 = 21, 6-дневка = 27 − 1 = 26
 eq([HR.workDays("2026-10", 5, []), HR.workDays("2026-10", 6, [])], [21, 26], "рабочие дни октября 2026");
 eq(HR.workDays("2026-10", 5, [], "2026-10-15", "2026-10-31"), 12, "рабочие дни с 15.10");
@@ -58,7 +61,7 @@ eq(HR.workDays("2026-10", 5, [], "2026-10-15", "2026-10-31"), 12, "рабочи�
 const s1 = HR.sick({ from: "2026-09-07", to: "2026-09-16", avg: 6000000, mrot: 1360000, long: false, bonus: false, prevDays: 0 });
 // 07.09 пн … 16.09 ср; воскресенье 13.09 пропускается; дни 1–5 работодатель, 6–10 фонд (день 7 — воскресенье)
 eq([s1.days, s1.empDays, s1.fundDays, s1.skipped], [10, 5, 4, 1], "больничный: дни");
-eq(s1.employer, Math.round(5 * 6000000 / 25.3 * 0.6), "больничный: работодатель");
+eq(s1.employer, Math.round(5 * 6000000 / 25.3 * 0.6 * 100) / 100, "больничный: работодатель");
 const s2 = HR.sick({ from: "2026-09-07", to: "2026-09-08", avg: 20000000, mrot: 1360000, long: true, bonus: true, prevDays: 0 });
 eq([s2.capped, s2.avgUsed, s2.base], [true, 13600000, 1], "больничный: предел 10 МРОТ и +20 п.п.");
 const s3 = HR.sick({ from: "2026-12-30", to: "2027-01-05", avg: 6000000, mrot: 1360000, long: false, prevDays: 300 });

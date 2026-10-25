@@ -8,7 +8,12 @@ const MONTHS_G = ["января", "февраля", "марта", "апреля"
 /* ---------- утилиты ---------- */
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmt = n => String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+/* Суммы — в сумах с тийинами: целые показываем без дробной части, остальные с двумя знаками */
+const fmt = n => {
+  n = Math.round((Number(n) || 0) * 100 + 1e-7 * (n < 0 ? -1 : 1)) / 100;
+  const [i, d] = Math.abs(n).toFixed(2).split(".");
+  return (n < 0 ? "−" : "") + i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d === "00" ? "" : "," + d);
+};
 const pct = n => String(n).replace(".", ",") + "%";
 const pad = n => String(n).padStart(2, "0");
 /* Даты вводятся руками как дд.мм.гггг (цифровая клавиатура): системный календарь в WebView открывается не везде */
@@ -30,7 +35,14 @@ const ymLabel = ym => { const [y, m] = ym.split("-").map(Number); return MONTHS[
 const fullName = e => [e.last, e.first, e.mid].filter(Boolean).join(" ");
 const shortName = e => e.last + " " + (e.first ? e.first[0] + "." : "") + (e.mid ? e.mid[0] + "." : "");
 const initials = e => ((e.last || "?")[0] + (e.first || "")[0]).toUpperCase();
-const parseAmt = v => Number(String(v || "").replace(/\D/g, "")) || 0;
+/* Ввод суммы: «1 234 567,89» (запятая или точка, до двух знаков после неё) */
+const parseAmt = v => { const m = String(v || "").replace(/[\s ]/g, "").replace(",", ".").match(/^\d*\.?\d{0,2}/); return m && m[0] ? Math.round(parseFloat(m[0] === "." ? "0" : m[0]) * 100) / 100 || 0 : 0; };
+function maskMoney(el) {
+  const s = el.value.replace(/[^\d.,]/g, ""), i = s.search(/[.,]/);
+  const ip = (i < 0 ? s : s.slice(0, i)).replace(/^0+(?=\d)/, ""), dp = i < 0 ? null : s.slice(i + 1).replace(/\D/g, "").slice(0, 2);
+  el.value = ip.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (dp === null ? "" : "," + dp);
+}
+const MONEY_IDS = ["f-amt", "a-amt", "o-amt", "p-amt", "d-amt", "v-avg", "s-avg"];
 const RULES_YEAR = 2026; // год, по правилам которого считает приложение (проект нового НК пока не действует)
 const yearNote = ym => (Number(ym.slice(0, 4)) > RULES_YEAR
   ? '<div class="alert warn">Правила на ' + ym.slice(0, 4) + ' год ещё не утверждены — расчёт идёт по правилам ' + RULES_YEAR + ' года.</div>' : "") +
@@ -123,7 +135,7 @@ function entryFor(e, ym) {
   const explicit = !!(m && !m.fz && m.amount != null);      // сумму за месяц ввели вручную — пропорцию не применяем
   const base = m && m.amount != null ? m.amount : e.amount;
   let amount = base, di = null;
-  if (!explicit && type !== "gph") { di = dayInfo(e, ym); if (di.frac < 1) amount = C.r0(base * di.frac); }
+  if (!explicit && type !== "gph") { di = dayInfo(e, ym); if (di.frac < 1) amount = C.r2(base * di.frac); }
   return {
     amount, base,
     mode: (m && m.mode) || e.mode,
@@ -170,7 +182,7 @@ function aidFor(e, ym) {   // все «прочие доходы» месяца 
   const y = ym.slice(0, 4), list = (S.aids || []).filter(a => a.emp === e.id && a.ym.slice(0, 4) === y && a.ym <= ym);
   const sum = f => list.filter(f).reduce((s, a) => s + a.amount, 0);
   const before = sum(a => isAidKind(a) && a.ym < ym), nowAid = sum(a => isAidKind(a) && a.ym === ym), nowAll = sum(a => a.ym === ym);
-  const lim = C.r0(4.22 * mrotFor(y + "-01", S.rules));
+  const lim = C.r2(4.22 * mrotFor(y + "-01", S.rules));
   return { aid: nowAll, aidEx: Math.max(0, Math.min(before + nowAid, lim) - Math.min(before, lim)), before, nowAid, lim };
 }
 function evExtras(e, ym) {
@@ -197,12 +209,12 @@ function avgMonthly(e, startIso) {
     tot += r.gross - x.extra - x.sick - x.aid;
     eq += di.W ? Math.max(0, di.worked - di.abs) / di.W : 1;
   }
-  if (eq > 0 && tot > 0) return C.r0(tot / eq);
+  if (eq > 0 && tot > 0) return C.r2(tot / eq);
   return C.calc({ amount: e.amount, mode: e.mode, type: e.type }, rulesEff(ym0)).gross;
 }
 const ZERO = () => ({ gross: 0, aid: 0, aidEx: 0, aidPit: 0, sick: 0, sickPit: 0, sickInps: 0, exempt: 0, itExempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
 const KEYS = Object.keys(ZERO());
-function addTo(t, r) { KEYS.forEach(k => { t[k] += r[k] || 0; }); return t; }
+function addTo(t, r) { KEYS.forEach(k => { t[k] = C.r2(t[k] + (r[k] || 0)); }); return t; }
 function sumList(list) { const t = ZERO(); list.forEach(r => addTo(t, r)); return t; }
 
 /* ---------- состояние интерфейса ---------- */
@@ -361,7 +373,7 @@ function openPay(id) {
   D = { kind: "pay", id, mode: en.mode, skip: en.skip, amt: en.amount };
   openSheet('<h2>' + esc(fullName(e)) + '</h2><p class="sub">' + ymLabel(ui.ym) + (en.type === "gph" ? " · договор ГПХ" : "") + '</p>' +
     seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки"]]) +
-    '<div style="height:12px"></div><label class="f"><span>' + (D.mode === "net" ? "Сумма на руки" : "Сумма начисления") + '</span><input class="in amt" id="f-amt" inputmode="numeric" value="' + (en.amount ? fmt(en.amount) : "") + '" autocomplete="off"></label>' +
+    '<div style="height:12px"></div><label class="f"><span>' + (D.mode === "net" ? "Сумма на руки" : "Сумма начисления") + '</span><input class="in amt" id="f-amt" inputmode="decimal" value="' + (en.amount ? fmt(en.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
     (en.day ? '<div class="hint">Неполный месяц: оклад пересчитан на ' + Math.max(0, en.day.worked - en.day.abs) + ' из ' + en.day.W + ' рабочих дней (по графику ' + empWd(e) + '-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.</div>' : "") +
     '<div class="btns"><button class="btn" data-act="savePay">Сохранить</button></div>' +
@@ -421,10 +433,10 @@ const dedKind = k => (DED_KINDS.find(x => x[0] === k) || DED_KINDS[3])[1];
 function payInfo(e, ym) {
   const { en, r } = calcEntry(e, ym);
   if (en.skip) return { net: 0, ded: 0, due: 0, paid: 0, left: 0 };
-  const ded = (S.deds || []).filter(d => d.emp === e.id && d.ym === ym).reduce((s, d) => s + d.amount, 0);
-  const paid = (S.pays || []).filter(p => p.emp === e.id && p.ym === ym).reduce((s, p) => s + p.amount, 0);
-  const due = Math.max(0, r.net - ded);
-  return { net: r.net, ded, due, paid, left: due - paid };
+  const ded = C.r2((S.deds || []).filter(d => d.emp === e.id && d.ym === ym).reduce((s, d) => s + d.amount, 0));
+  const paid = C.r2((S.pays || []).filter(p => p.emp === e.id && p.ym === ym).reduce((s, p) => s + p.amount, 0));
+  const due = Math.max(0, C.r2(r.net - ded));
+  return { net: r.net, ded, due, paid, left: C.r2(due - paid) };
 }
 const xBtn = (act, id) => '<button class="ib" data-act="' + act + '" data-id="' + id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>';
 function payBlock(e) {
@@ -447,7 +459,7 @@ function openPayAdd() {
   D = { kind: "payadd", id: e.id, pk: "advance" };
   openSheet('<h2>Выплата</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
     '<div class="f"><span>Вид</span>' + seg("pk", D.pk, [["advance", "Аванс"], ["salary", "Зарплата"], ["other", "Другое"]]) + '</div>' +
-    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="p-amt" inputmode="numeric" value="' + (left > 0 ? fmt(left) : "") + '" autocomplete="off"></label>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="p-amt" inputmode="decimal" value="' + (left > 0 ? fmt(left) : "") + '" autocomplete="off"></label>' +
     dateField("p-date", todayIso(), "Дата выплаты") +
     '<div class="stack"><button class="btn" data-act="savePayAdd">Записать</button></div>');
 }
@@ -456,7 +468,7 @@ function openDedAdd() {
   D = { kind: "dedadd", id: e.id, dk: "alimony" };
   openSheet('<h2>Удержание</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
     '<div class="f"><span>Вид</span><select class="in" id="d-kind">' + DED_KINDS.map(k => '<option value="' + k[0] + '">' + k[1] + '</option>').join("") + '</select></div>' +
-    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="d-amt" inputmode="numeric" autocomplete="off"></label>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="d-amt" inputmode="decimal" autocomplete="off"></label>' +
     '<label class="f"><span>Комментарий</span><input class="in" id="d-note" autocomplete="off"></label>' +
     '<div class="hint">Удерживается из суммы «на руки»; НДФЛ, ИНПС и соцналог не меняются.</div>' +
     '<div class="stack"><button class="btn" data-act="saveDedAdd">Записать</button></div>');
@@ -497,7 +509,7 @@ function openAid() {
   const e = curDraftEmp(); if (!e) return;
   D = { kind: "aid", id: e.id };
   openSheet('<h2>Материальная помощь</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
-    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="a-amt" inputmode="numeric" autocomplete="off"></label>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="a-amt" inputmode="decimal" autocomplete="off"></label>' +
     '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveAid">Добавить в начисления</button></div>');
   updAid();
 }
@@ -505,7 +517,7 @@ function updAid() {
   const el = $("#hr-prev"); if (!el || !D || D.kind !== "aid") return;
   const e = curDraftEmp(), amt = parseAmt($("#a-amt").value), a = aidFor(e, ui.ym), pit = S.rules.pit;
   D.amt = amt;
-  const free = Math.max(0, a.lim - a.before - a.nowAid), ex = Math.min(amt, free), tax = C.r0((amt - ex) * pit / 100);
+  const free = Math.max(0, a.lim - a.before - a.nowAid), ex = Math.min(amt, free), tax = C.r2((amt - ex) * pit / 100);
   el.innerHTML = '<div class="calc"><div class="l"><span>Предел без налога за ' + ui.ym.slice(0, 4) + ' год (4,22 МРОТ)</span><span class="num">' + fmt(a.lim) + '</span></div>' +
     '<div class="l"><span>Уже выплачено в этом году</span><span class="num">' + fmt(a.before + a.nowAid) + '</span></div>' +
     '<div class="l"><span>Не облагается налогом</span><span class="num">' + fmt(ex) + '</span></div>' +
@@ -519,7 +531,7 @@ function openVac() {
   openSheet('<h2>Отпускные</h2><p class="sub">' + esc(fullName(e)) + '</p>' +
     dateField("v-start", start, "Первый день отпуска") +
     '<label class="f"><span>Календарных дней отпуска</span><input class="in" id="v-days" inputmode="numeric" value="21" autocomplete="off"></label>' +
-    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="v-avg" inputmode="numeric" value="' + fmt(avgMonthly(e, start)) + '" autocomplete="off"></label>' +
+    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="v-avg" inputmode="decimal" value="' + fmt(avgMonthly(e, start)) + '" autocomplete="off"></label>' +
     '<div class="hint">Посчитана за 12 месяцев до месяца отпуска из начислений в приложении (ТК, ст. 257); можно изменить.</div>' +
     '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveVac">Добавить в начисления</button></div>');
   updHr();
@@ -541,7 +553,7 @@ function openSick() {
     '<div class="two">' + dateField("s-from", d, "Начало листка") + dateField("s-to", d, "Конец листка") + '</div>' +
     '<div class="f"><span>Страховой стаж</span>' + seg("long", D.long, [["0", "6 мес – 8 лет (60%)"], ["1", "Более 8 лет (80%)"]]) + '</div>' +
     sw("swd", "bonus", false, "+20 п.п. к коэффициенту", "Инвалид I–II группы, 4+ детей до 18 лет или ребёнок-инвалид в семье") +
-    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="s-avg" inputmode="numeric" value="' + fmt(avgMonthly(e, d)) + '" autocomplete="off"></label>' +
+    '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="s-avg" inputmode="decimal" value="' + fmt(avgMonthly(e, d)) + '" autocomplete="off"></label>' +
     '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveSick">Добавить в начисления</button></div>');
   updHr();
 }
@@ -596,13 +608,13 @@ function recipient(id) {
 }
 /* Сводка по получателям и видам дохода на конец месяца last (нарастающим итогом с января) и за сам месяц; НДФЛ по общей ставке, без ИНПС и соцналога */
 function othersAgg(last) {
-  const y = last.slice(0, 4), prev = last.slice(5) === "01" ? null : addYm(last, -1), lim = C.r0(4.22 * mrotFor(y + "-01", S.rules)), pit = S.rules.pit;
+  const y = last.slice(0, 4), prev = last.slice(5) === "01" ? null : addYm(last, -1), lim = C.r2(4.22 * mrotFor(y + "-01", S.rules)), pit = S.rules.pit;
   const groups = new Map();
   (S.aids || []).filter(a => a.ym.slice(0, 4) === y && a.ym <= last).forEach(a => { const k = a.emp + "|" + (a.kind || "aid"); (groups.get(k) || groups.set(k, []).get(k)).push(a); });
   const rows = [];
   groups.forEach((list, k) => {
     const [rid, kind] = k.split("|"), r = recipient(rid);
-    const at = ym => { const cum = list.filter(a => a.ym <= ym).reduce((s, a) => s + a.amount, 0), ex = kind === "aid" ? Math.min(cum, lim) : 0; return { cum, ex, tax: C.r0((cum - ex) * pit / 100) }; };
+    const at = ym => { const cum = list.filter(a => a.ym <= ym).reduce((s, a) => s + a.amount, 0), ex = kind === "aid" ? Math.min(cum, lim) : 0; return { cum, ex, tax: C.r2((cum - ex) * pit / 100) }; };
     const c = at(last), p = prev ? at(prev) : { cum: 0, ex: 0, tax: 0 };
     rows.push({ rid, kind, r, cum: c.cum, mon: c.cum - p.cum, cumEx: c.ex, monEx: c.ex - p.ex, cumTax: c.tax, monTax: c.tax - p.tax });
   });
@@ -622,7 +634,7 @@ function openOthers() {
     '<label class="f"><span>ПИНФЛ (14 цифр)</span><input class="in" id="o-pinfl" inputmode="numeric" maxlength="14"></label>' +
     '<label class="f"><span>Статус</span><select class="in" id="o-res"><option value="1">Резидент</option><option value="2">Нерезидент (иностранец, меньше 183 дней в году)</option></select></label></div>' +
     '<label class="f"><span>Вид дохода</span><select class="in" id="o-kind">' + OTHER_KINDS.map(k => '<option value="' + k[0] + '">' + k[1] + '</option>').join("") + '</select></label>' +
-    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="o-amt" inputmode="numeric" autocomplete="off"></label>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="o-amt" inputmode="decimal" autocomplete="off"></label>' +
     '<div id="hr-prev"></div><div class="hint">Аренда, поставленная на учёт в E-ijara, в отчёт вручную не вносится — налоговая берёт её сама.</div>' +
     '<div class="stack"><button class="btn" data-act="saveOther">Добавить</button></div>');
   updOther();
@@ -631,13 +643,13 @@ function updOther() {
   const el = $("#hr-prev"); if (!el || !D || D.kind !== "others") return;
   const who = $("#o-who").value, kind = $("#o-kind").value, amt = parseAmt($("#o-amt").value);
   $("#o-new").style.display = who === "__new" ? "block" : "none";
-  const pit = S.rules.pit, lim = C.r0(4.22 * mrotFor(ui.ym.slice(0, 4) + "-01", S.rules));
+  const pit = S.rules.pit, lim = C.r2(4.22 * mrotFor(ui.ym.slice(0, 4) + "-01", S.rules));
   let ex = 0;
   if (kind === "aid") {
     const before = who && who !== "__new" ? (S.aids || []).filter(a => a.emp === who && isAidKind(a) && a.ym.slice(0, 4) === ui.ym.slice(0, 4) && a.ym <= ui.ym).reduce((s, a) => s + a.amount, 0) : 0;
     ex = Math.min(amt, Math.max(0, lim - before));
   }
-  const tax = C.r0((amt - ex) * pit / 100);
+  const tax = C.r2((amt - ex) * pit / 100);
   el.innerHTML = amt > 0 ? '<div class="calc">' + (ex ? '<div class="l"><span>Не облагается (до 4,22 МРОТ в год)</span><span class="num">' + fmt(ex) + '</span></div>' : "") +
     '<div class="l t"><span>НДФЛ ' + pct(pit) + '</span><span class="num">' + fmt(tax) + '</span></div><div class="l"><span>Получатель получит</span><span class="num">' + fmt(amt - tax) + '</span></div></div>' : "";
 }
@@ -707,7 +719,7 @@ function openEmp(id) {
         .map(o => '<option value="' + o[0] + '"' + ((v.ben || "") === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") + '</select></label>' +
     '<div class="hint">Только трудовой договор по основному месту работы; нужны документы, подтверждающие льготу.</div>' +
     '<div class="f"><span>Как вводите сумму</span>' + seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки (обратный расчёт)"]]) + '</div>' +
-    '<label class="f"><span id="amt-l">' + (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + ' *</span><input class="in amt" id="f-amt" inputmode="numeric" value="' + (v.amount ? fmt(v.amount) : "") + '" autocomplete="off"></label>' +
+    '<label class="f"><span id="amt-l">' + (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + ' *</span><input class="in amt" id="f-amt" inputmode="decimal" value="' + (v.amount ? fmt(v.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
     '<div class="two">' + dateField("f-hire", v.hire || (e ? v.from + "-01" : (ui.ym === curYm() ? todayIso() : ui.ym + "-01")), "Дата принятия *") +
     dateField("f-to", v.fire || (v.to ? v.to + "-" + pad(new Date(+v.to.slice(0, 4), +v.to.slice(5), 0).getDate()) : ""), "Дата увольнения") + '</div>' +
@@ -1221,14 +1233,15 @@ function applyItDate(el) {
 document.addEventListener("input", ev => {
   const el = ev.target;
   if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
-  if (el.id === "v-days" || el.id === "v-avg" || el.id === "s-avg") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; if (el.id !== "v-days") D.avgTouched = true; }
+  if (el.id === "v-days") el.value = el.value.replace(/\D/g, "");
+  if (el.id === "v-avg" || el.id === "s-avg") { maskMoney(el); D.avgTouched = true; }
   if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
-  if (el.id === "p-amt" || el.id === "d-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; }
-  if (el.id === "o-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updOther(); }
+  if (el.id === "p-amt" || el.id === "d-amt") maskMoney(el);
+  if (el.id === "o-amt") { maskMoney(el); updOther(); }
   if (el.id === "o-pinfl") el.value = el.value.replace(/\D/g, "");
-  if (el.id === "a-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updAid(); }
+  if (el.id === "a-amt") { maskMoney(el); updAid(); }
   if (el.id === "f-amt") {
-    const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; el.classList.remove("bad"); updPreview();
+    maskMoney(el); el.classList.remove("bad"); updPreview();
   } else if (el.id === "f-ben") updPreview();
   else if (el.id === "o-who" || el.id === "o-kind") updOther();
   else if (el.id === "f-pinfl" || el.id === "w-inn" || el.id === "c-inn" || el.id === "n-inn") el.value = el.value.replace(/\D/g, "");

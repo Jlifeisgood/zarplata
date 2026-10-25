@@ -5,6 +5,7 @@
    первые 5 календарных дней в году платит работодатель, с 6-го — Фонд; свыше 77 дней в году коэффициент −10 п.п.; не более 182 дней в году. */
 (function (root) {
   var DIV = 25.3; // среднемесячное число рабочих дней
+  var r2 = function (x) { return Math.round(x * 100 + 1e-7) / 100; }; // суммы — с точностью до тийина
   var pad = function (n) { return String(n).padStart(2, "0"); };
   // нерабочие праздничные дни (ТК ст. 208), которые не меняются по годам; дни Хайита и переносы добавляются вручную
   var FIXED = ["01-01", "03-08", "03-21", "05-09", "09-01", "10-01", "12-08"];
@@ -36,7 +37,7 @@
     var end = addDays(o.start, o.days - 1), sun = 0, hol = 0;
     eachDay(o.start, end, function (s) { if (isSunday(s)) sun++; else if (isHoliday(s, o.extra)) hol++; });
     var paid = o.days - sun - hol, daily = o.avg / DIV;
-    return { end: end, sun: sun, hol: hol, paid: paid, daily: daily, pay: Math.round(daily * paid) };
+    return { end: end, sun: sun, hol: hol, paid: paid, daily: daily, pay: r2(daily * paid) };
   }
 
   /**
@@ -55,8 +56,8 @@
       if (k <= 5) { emp += v; empDays++; } else { fund += v; fundDays++; }
     });
     return {
-      base: base, capped: o.avg > cap, avgUsed: a, employer: Math.round(emp), fund: Math.round(fund), empDays: empDays, fundDays: fundDays,
-      skipped: skipped, over: over, total: Math.round(emp) + Math.round(fund),
+      base: base, capped: o.avg > cap, avgUsed: a, employer: r2(emp), fund: r2(fund), empDays: empDays, fundDays: fundDays,
+      skipped: skipped, over: over, total: r2(r2(emp) + r2(fund)),
       days: Math.round((toDate(o.to) - toDate(o.from)) / 86400000) + 1
     };
   }
