@@ -7,7 +7,7 @@ const { calc, DEFAULT_RULES } = window.Calc;
 const out = []; let fails = 0;
 function eq(a, b, m) { const ok = JSON.stringify(a) === JSON.stringify(b); if (!ok) { fails++; out.push("FAIL " + m + " got " + JSON.stringify(a) + " want " + JSON.stringify(b)); } }
 const R = DEFAULT_RULES;
-eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, sick: 0, exempt: 0, itExempt: 0, pit: 600000, sickPit: 0, inps: 5000, sickInps: 0, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
+eq(calc({ amount: 5000000, mode: "gross", type: "trud" }, R), { gross: 5000000, aid: 0, aidEx: 0, aidPit: 0, sick: 0, exempt: 0, itExempt: 0, pit: 600000, sickPit: 0, inps: 5000, sickInps: 0, pitBudget: 595000, esp: 600000, net: 4400000, cost: 5600000 }, "inside");
 const o = calc({ amount: 5000000, mode: "gross", type: "trud" }, { ...R, inpsInsidePit: false });
 eq([o.net, o.pitBudget], [4395000, 600000], "outside");
 const g = calc({ amount: 1000000, mode: "gross", type: "gph" }, { ...R, inpsGph: false });
@@ -22,7 +22,7 @@ for (const inside of [true, false]) for (const type of ["trud", "gph"]) for (con
 }
 eq(calc({ amount: 1000000, mode: "gross", type: "trud" }, { ...R, budget: true }).esp, 250000, "budget");
 const IT = { ...R, itpark: true };
-eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, sick: 0, exempt: 0, itExempt: 3750000, pit: 750000, sickPit: 0, inps: 10000, sickInps: 0, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
+eq(calc({ amount: 10000000, mode: "gross", type: "trud" }, IT), { gross: 10000000, aid: 0, aidEx: 0, aidPit: 0, sick: 0, exempt: 0, itExempt: 3750000, pit: 750000, sickPit: 0, inps: 10000, sickInps: 0, pitBudget: 740000, esp: 0, net: 9250000, cost: 10000000 }, "itpark trud");
 // отпускные: как зарплата (ЕСП есть), больничные: НДФЛ и ИНПС, ЕСП нет
 const x1 = calc({ amount: 5000000, mode: "gross", type: "trud", extra: 1000000 }, R);
 eq([x1.gross, x1.pit, x1.esp, x1.net, x1.sick], [6000000, 720000, 720000, 5280000, 0], "отпускные");
@@ -41,6 +41,11 @@ const b2 = calc({ amount: 1500000, mode: "gross", type: "trud", benefit: 1.41 },
 eq([b2.exempt, b2.pit, b2.net], [1500000, 0, 1500000], "ст.380: доход меньше лимита");
 const b3 = calc({ amount: 5000000, mode: "gross", type: "gph", benefit: 3 }, R);
 eq(b3.exempt, 0, "ст.380 не для ГПХ");
+// материальная помощь: 3 млн, из них необлагаемо 5 363 620 → налога нет, ЕСП/ИНПС не растут
+const a1 = calc({ amount: 5000000, mode: "gross", type: "trud", aid: 3000000, aidExempt: 5363620 }, R);
+eq([a1.gross, a1.aid, a1.aidPit, a1.pit, a1.inps, a1.esp, a1.net], [8000000, 3000000, 0, 600000, 5000, 600000, 7400000], "мат. помощь в пределах льготы");
+const a2 = calc({ amount: 5000000, mode: "gross", type: "trud", aid: 6000000, aidExempt: 5363620 }, R);
+eq([a2.aidPit, a2.pit, a2.net, a2.esp], [76366, 676366, 10323634, 600000], "мат. помощь сверх лимита облагается 12%");
 // кадровые расчёты
 const HR = window.HR;
 // пример из kadry.uz: 03–23.07.2026, 21 день, 3 воскресенья, 6 000 000 → 6 000 000 / 25,3 × 18 = 4 268 775

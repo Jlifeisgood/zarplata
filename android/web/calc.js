@@ -17,6 +17,7 @@
     benId: '',          // ID льготы НДФЛ по ст. 380 в кабинете my.soliq.uz (графа «Номер льготы» приложения 4), вводит пользователь
     benIdIt: '103847',  // ID льготы НДФЛ резидента IT Park в кабинете my.soliq.uz (дал пользователь)
     holExtra: [],       // дополнительные нерабочие праздничные дни (ГГГГ-ММ-ДД), например дни Хайита — по постановлению
+    benIdAid: '102901', // ID льготы НДФЛ для материальной помощи (ст. 378 ч. 1 п. 1, абз. 3) — по видеоразбору формы и форме 2025 года
     mrot: 1360000       // МРОТ с 01.09.2026 (УП-115 от 23.06.2026): подсказка, льгота ст. 380, предел для больничных
   };
 
@@ -57,6 +58,9 @@
       for (var i = 0; i < 6 && netOf(base) < amount; i++) base++;
       for (var j = 0; j < 6 && base > 0 && netOf(base - 1) >= amount; j++) base--;
     } else base = r0(amount);
+    // материальная помощь (ст. 377, 378 НК): только НДФЛ по общей ставке с суммы сверх необлагаемой части, без ИНПС и соцналога
+    var aid = Math.max(0, r0(Number(o.aid) || 0)), aidEx = Math.min(aid, Math.max(0, r0(Number(o.aidExempt) || 0)));
+    var aidPit = r0((aid - aidEx) * R.pit / 100);
     var gross = base + extra + sick;
     var t = taxable(gross);
     var pitAmt = r0(t * pit);
@@ -67,8 +71,10 @@
     var sickPit = r0(sickTaxable * pit), sickInps = r0(sickTaxable * inpsRate);
     // IT Park: льготная ставка в отчёте выражается «необлагаемой» долей дохода: налог по полной ставке с остатка = налог по ставке IT Park
     var itEx = (R.itpark && o.type !== 'gph' && R.pit > 0) ? laborTaxable - r0(laborTaxable * R.pitIt / R.pit) : 0;
+    pitAmt += aidPit;
     return {
-      gross: gross,
+      gross: gross + aid,
+      aid: aid, aidEx: aidEx, aidPit: aidPit,        // из начисленного: материальная помощь, её необлагаемая часть и НДФЛ с неё
       sick: sick,                                    // из начисленного: пособие по ВН (не оплата труда)
       exempt: gross - t,                             // не облагаемая налогом часть (ст. 380)
       itExempt: itEx,                                // доля дохода, не облагаемая «по полной ставке» из-за льготы IT Park
@@ -78,8 +84,8 @@
       sickInps: sickInps,
       pitBudget: outside ? pitAmt : pitAmt - inpsAmt,// НДФЛ к уплате в бюджет
       esp: esp,
-      net: gross - pitAmt - (outside ? inpsAmt : 0), // на руки
-      cost: gross + esp                              // полная стоимость для работодателя
+      net: gross + aid - pitAmt - (outside ? inpsAmt : 0), // на руки
+      cost: gross + aid + esp                        // полная стоимость для работодателя
     };
   }
 

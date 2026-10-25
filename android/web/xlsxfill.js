@@ -44,25 +44,16 @@
   window.XZip = { zipStore, toB64, enc, xmlEsc, colName };
 
   /**
-   * rows: массив строк; значения — число, строка или null. Колонки идут с B (графа 1). Данные пишутся с 15-й строки.
-   * Возвращает xlsx в base64.
+   * rows — строки приложения 4 (лист list01), rows2 — приложения 5 (лист list02); значения: число, строка или null.
+   * Колонки идут с B (графа 1). Данные пишутся с 15-й строки. Возвращает xlsx в base64.
    */
-  window.fillTemplate = function (rows) {
-    const F = window.TPL_FILES, FIRST = 15, LASTCOL = 45; // AS — последняя графа для заполнения
-    let sheet = txt(dec(F["xl/worksheets/sheet1.xml"]));
+  window.fillTemplate = function (rows, rows2) {
+    const F = window.TPL_FILES, FIRST = 15;
     let sst = txt(dec(F["xl/sharedStrings.xml"]));
     const head = sst.match(/<sst[^>]*>/)[0];
     let count = +head.match(/ count="(\d+)"/)[1], unique = +head.match(/uniqueCount="(\d+)"/)[1];
     const added = [];
     const str = s => { added.push('<si><t xml:space="preserve">' + xmlEsc(s) + '</t></si>'); count++; return unique++; };
-
-    // стили колонок из шаблона (ячейка без стиля получила бы «пустой» формат)
-    const style = {};
-    (sheet.match(/<cols>.*<\/cols>/) || [""])[0].replace(/<col [^>]*>/g, c => {
-      const min = +c.match(/min="(\d+)"/)[1], max = +c.match(/max="(\d+)"/)[1], s = c.match(/style="(\d+)"/);
-      if (s) for (let i = min; i <= max; i++) style[i] = s[1];
-      return c;
-    });
 
     // в шаблоне у графы «рабочее время» формат «0» (0,5 выглядит как 1), а у сумм «0.0» (12000000,0): задаём читаемые форматы
     let styles = txt(dec(F["xl/styles.xml"]));
@@ -70,35 +61,48 @@
     styles = styles.replace(xfs[0], '<cellXfs count="' + (baseXf + 2) + '">').replace("</cellXfs>",
       '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1" applyProtection="1"><alignment horizontal="center" vertical="center"/><protection locked="0"/></xf>' +
       '<xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1" applyAlignment="1" applyProtection="1"><alignment horizontal="right" vertical="center"/><protection locked="0"/></xf></cellXfs>');
-    style[10] = String(baseXf);                                          // J — рабочее время (в ставках)
-    Object.keys(style).forEach(c => { if (style[c] === "11") style[c] = String(baseXf + 1); }); // суммы: #,##0.00
 
-    const sums = {};
-    const xml = rows.map((vals, i) => {
-      const r = FIRST + i;
-      let cells = "";
-      for (let col = 2; col <= LASTCOL; col++) {
-        const v = vals[col - 2], ref = colName(col) + r, s = style[col] ? ' s="' + style[col] + '"' : "";
-        if (typeof v === "number" && isFinite(v)) { cells += '<c r="' + ref + '"' + s + '><v>' + v + '</v></c>'; sums[col] = (sums[col] || 0) + v; }
-        else if (v != null && v !== "") cells += '<c r="' + ref + '"' + s + ' t="s"><v>' + str(v) + '</v></c>';
-        else cells += '<c r="' + ref + '"' + s + '/>';
+    /** Дописывает строки на лист. moneyStyle — стиль сумм в шаблоне (заменяем на #,##0.00), rateCol — графа «рабочее время» (лист 1). */
+    function fillSheet(path, data, lastCol, moneyStyle, rateCol) {
+      let sheet = txt(dec(F[path]));
+      const style = {};
+      (sheet.match(/<cols>.*<\/cols>/) || [""])[0].replace(/<col [^>]*>/g, c => {   // стили колонок шаблона (ячейка без стиля получила бы «пустой» формат)
+        const min = +c.match(/min="(\d+)"/)[1], max = +c.match(/max="(\d+)"/)[1], s = c.match(/style="(\d+)"/);
+        if (s) for (let i = min; i <= max; i++) style[i] = s[1];
+        return c;
+      });
+      if (rateCol) style[rateCol] = String(baseXf);
+      Object.keys(style).forEach(c => { if (style[c] === moneyStyle) style[c] = String(baseXf + 1); });
+      const sums = {};
+      const xml = data.map((vals, i) => {
+        const r = FIRST + i;
+        let cells = "";
+        for (let col = 2; col <= lastCol; col++) {
+          const v = vals[col - 2], ref = colName(col) + r, s = style[col] ? ' s="' + style[col] + '"' : "";
+          if (typeof v === "number" && isFinite(v)) { cells += '<c r="' + ref + '"' + s + '><v>' + v + '</v></c>'; sums[col] = (sums[col] || 0) + v; }
+          else if (v != null && v !== "") cells += '<c r="' + ref + '"' + s + ' t="s"><v>' + str(v) + '</v></c>';
+          else cells += '<c r="' + ref + '"' + s + '/>';
+        }
+        return '<row r="' + r + '" spans="2:49">' + cells + '</row>';
+      }).join("");
+      sheet = sheet.replace("</sheetData>", xml + "</sheetData>")
+        .replace(/<dimension ref="B1:([A-Z]+)\d+"\/>/, '<dimension ref="B1:$1' + (FIRST - 1 + Math.max(data.length, 1)) + '"/>');
+      for (let col = 5; col <= lastCol; col++) {   // кэшированные итоги в строке 12 (Excel всё равно пересчитает при открытии)
+        const L = colName(col);
+        sheet = sheet.replace(new RegExp('(<c r="' + L + '12"[^>]*><f>[^<]*</f>)<v>[^<]*</v>'), "$1<v>" + (sums[col] || 0) + "</v>");
       }
-      return '<row r="' + r + '" spans="2:49">' + cells + '</row>';
-    }).join("");
-
-    sheet = sheet.replace("</sheetData>", xml + "</sheetData>")
-      .replace(/<dimension ref="[^"]*"\/>/, '<dimension ref="B1:AW' + (FIRST - 1 + Math.max(rows.length, 1)) + '"/>');
-    // кэшированные итоги в строке 12 (Excel всё равно пересчитает при открытии)
-    for (let col = 12; col <= LASTCOL; col++) {
-      const L = colName(col);
-      sheet = sheet.replace(new RegExp('(<c r="' + L + '12"[^>]*><f>[^<]*</f>)<v>[^<]*</v>'), "$1<v>" + (sums[col] || 0) + "</v>");
+      return sheet;
     }
+
+    const sheet1 = fillSheet("xl/worksheets/sheet1.xml", rows, 45, "11", 10);        // AS — последняя графа приложения 4
+    const sheet2 = fillSheet("xl/worksheets/sheet2.xml", rows2 || [], 40, "39", 0);   // AN — последняя графа приложения 5
     sst = sst.replace(head, head.replace(/ count="\d+"/, ' count="' + count + '"').replace(/uniqueCount="\d+"/, 'uniqueCount="' + unique + '"'))
       .replace("</sst>", added.join("") + "</sst>");
 
     const files = Object.keys(F).map(name => ({
       name,
-      data: name === "xl/worksheets/sheet1.xml" ? enc(sheet) : name === "xl/sharedStrings.xml" ? enc(sst) : name === "xl/styles.xml" ? enc(styles) : dec(F[name])
+      data: name === "xl/worksheets/sheet1.xml" ? enc(sheet1) : name === "xl/worksheets/sheet2.xml" ? enc(sheet2)
+        : name === "xl/sharedStrings.xml" ? enc(sst) : name === "xl/styles.xml" ? enc(styles) : dec(F[name])
     }));
     return toB64(zipStore(files));
   };

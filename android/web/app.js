@@ -50,7 +50,7 @@ const ICON = {
    список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
 const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [] };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [] };
 }
 function normalize(s) {
   if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
@@ -59,6 +59,7 @@ function normalize(s) {
   s.company = Object.assign({ name: "", inn: "", split: false }, s.company);
   s.months = s.months || {};
   s.events = s.events || [];                       // отпуска и больничные: { id, emp, type: 'vac'|'sick', from, to, payYm, amount, ... }
+  s.aids = s.aids || [];                           // материальная помощь: { id, emp, ym, amount }
   s.rules.holExtra = s.rules.holExtra || [];
   if (s.rules.benId === "103847") s.rules.benId = ""; // 103847 — ID льготы IT Park, а не ст. 380
   if (!s.rv) { // v2: ИНПС и с ГПХ (ПП-4086 п. 5 — все доходы, облагаемые НДФЛ)
@@ -160,14 +161,22 @@ function freezePast() {
   }
 }
 /* Отпускные (оплата труда) и больничные за счёт работодателя, начисленные в месяце ym */
+/* Материальная помощь (ст. 377, 378 НК): не облагается НДФЛ в пределах 4,22 МРОТ за календарный год (МРОТ на 1 января), сверх — 12%; ИНПС и соцналога нет */
+function aidFor(e, ym) {
+  const y = ym.slice(0, 4), list = (S.aids || []).filter(a => a.emp === e.id && a.ym.slice(0, 4) === y && a.ym <= ym);
+  const before = list.filter(a => a.ym < ym).reduce((s, a) => s + a.amount, 0), now = list.filter(a => a.ym === ym).reduce((s, a) => s + a.amount, 0);
+  const lim = C.r0(4.22 * mrotFor(y + "-01", S.rules));
+  return { aid: now, aidEx: Math.max(0, Math.min(before + now, lim) - Math.min(before, lim)), before, lim };
+}
 function evExtras(e, ym) {
   let extra = 0, sick = 0;
   (S.events || []).forEach(ev => { if (ev.emp === e.id && ev.payYm === ym) { if (ev.type === "vac") extra += ev.amount; else sick += ev.amount; } });
-  return { extra, sick };
+  const a = aidFor(e, ym);
+  return { extra, sick, aid: a.aid, aidEx: a.aidEx };
 }
 function calcEntry(e, ym) {
   const en = entryFor(e, ym), x = evExtras(e, ym);
-  const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0, extra: x.extra, sick: x.sick }, rulesEff(ym));
+  const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0, extra: x.extra, sick: x.sick, aid: x.aid, aidExempt: x.aidEx }, rulesEff(ym));
   return { en, r, x };
 }
 /* Средняя месячная зарплата за 12 календарных месяцев перед месяцем startIso (ТК ст. 257): оплата труда без отпускных и пособий,
@@ -180,13 +189,13 @@ function avgMonthly(e, startIso) {
     if (!empActive(e, ym)) continue;
     const { en, r, x } = calcEntry(e, ym), di = dayInfo(e, ym);
     if (en.skip || !di.worked) continue;
-    tot += r.gross - x.extra - x.sick;
+    tot += r.gross - x.extra - x.sick - x.aid;
     eq += di.W ? Math.max(0, di.worked - di.abs) / di.W : 1;
   }
   if (eq > 0 && tot > 0) return C.r0(tot / eq);
   return C.calc({ amount: e.amount, mode: e.mode, type: e.type }, rulesEff(ym0)).gross;
 }
-const ZERO = () => ({ gross: 0, sick: 0, sickPit: 0, sickInps: 0, exempt: 0, itExempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
+const ZERO = () => ({ gross: 0, aid: 0, aidEx: 0, aidPit: 0, sick: 0, sickPit: 0, sickInps: 0, exempt: 0, itExempt: 0, pit: 0, inps: 0, pitBudget: 0, esp: 0, net: 0, cost: 0 });
 const KEYS = Object.keys(ZERO());
 function addTo(t, r) { KEYS.forEach(k => { t[k] += r[k] || 0; }); return t; }
 function sumList(list) { const t = ZERO(); list.forEach(r => addTo(t, r)); return t; }
@@ -218,12 +227,13 @@ function confirmBox(msg) { return window.confirm(msg); }
 function breakdown(r, rules, type, x) {
   const inside = rules.inpsInsidePit;
   const rt = C.rates(rules, type), espR = rt.esp;
-  x = x || { extra: 0, sick: 0 };
+  x = x || { extra: 0, sick: 0, aid: 0, aidEx: 0 };
   let h = '<div class="calc">';
-  if (x.extra || x.sick) {
-    h += '<div class="l"><span>Оплата труда за месяц</span><span class="num">' + fmt(r.gross - x.extra - x.sick) + '</span></div>';
+  if (x.extra || x.sick || x.aid) {
+    h += '<div class="l"><span>Оплата труда за месяц</span><span class="num">' + fmt(r.gross - x.extra - x.sick - x.aid) + '</span></div>';
     if (x.extra) h += '<div class="l"><span>Отпускные</span><span class="num">' + fmt(x.extra) + '</span></div>';
     if (x.sick) h += '<div class="l"><span>Больничный (за счёт работодателя)</span><span class="num">' + fmt(x.sick) + '</span></div>';
+    if (x.aid) h += '<div class="l"><span>Материальная помощь (без налога ' + fmt(x.aidEx) + ')</span><span class="num">' + fmt(x.aid) + '</span></div>';
   }
   h += '<div class="l"><span>Начислено</span><b class="num">' + fmt(r.gross) + '</b></div>';
   if (r.exempt > 0) h += '<div class="l"><span>Не облагается (ст. 380 НК)</span><span class="num">' + fmt(r.exempt) + '</span></div>';
@@ -357,11 +367,11 @@ function updPreview() {
   const el = $("#prev"); if (!el || !D) return;
   const amt = parseAmt($("#f-amt").value);
   let type, ben, rules, hint = "";
-  let x = { extra: 0, sick: 0 };
+  let x = { extra: 0, sick: 0, aid: 0, aidEx: 0 };
   if (D.kind === "pay") { const e = curDraftEmp(), en = entryFor(e, ui.ym); type = en.type; ben = en.ben; rules = rulesEff(ui.ym); x = evExtras(e, ui.ym); }
   else { type = D.type; ben = $("#f-ben") ? $("#f-ben").value : ""; rules = rulesEff(curYm()); }
-  const r = C.calc({ amount: amt, mode: D.mode, type, benefit: Number(ben) || 0, extra: x.extra, sick: x.sick }, rules);
-  if (amt > 0 && type === "trud" && r.gross - x.extra - x.sick < rules.mrot && !(D.kind === "pay" && entryFor(curDraftEmp(), ui.ym).day)) hint = '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
+  const r = C.calc({ amount: amt, mode: D.mode, type, benefit: Number(ben) || 0, extra: x.extra, sick: x.sick, aid: x.aid, aidExempt: x.aidEx }, rules);
+  if (amt > 0 && type === "trud" && r.gross - x.extra - x.sick - x.aid < rules.mrot && !(D.kind === "pay" && entryFor(curDraftEmp(), ui.ym).day)) hint = '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
   el.innerHTML = amt > 0 ? breakdown(r, rules, type, x) + hint : '<div class="hint">Введите сумму — ниже появится расчёт.</div>';
 }
 function savePay() {
@@ -378,10 +388,11 @@ function savePay() {
 function payslip(e) {
   const { en, r, x } = calcEntry(e, ui.ym), R = rulesEff(ui.ym);
   const L = ["Расчётный листок", S.company.name ? "Компания: " + S.company.name : "", "Сотрудник: " + fullName(e), "Период: " + ymLabel(ui.ym), ""];
-  if (x.extra || x.sick) {
-    L.push("Оплата труда: " + fmt(r.gross - x.extra - x.sick) + " сум");
+  if (x.extra || x.sick || x.aid) {
+    L.push("Оплата труда: " + fmt(r.gross - x.extra - x.sick - x.aid) + " сум");
     if (x.extra) L.push("Отпускные: " + fmt(x.extra) + " сум");
     if (x.sick) L.push("Больничный (за счёт работодателя): " + fmt(x.sick) + " сум");
+    if (x.aid) L.push("Материальная помощь: " + fmt(x.aid) + " сум (без налога " + fmt(x.aidEx) + ")");
   }
   L.push("Начислено: " + fmt(r.gross) + " сум", "НДФЛ " + pct(C.rates(R, en.type).pit) + ": " + fmt(r.pit) + " сум");
   if (r.inps) L.push("ИНПС " + pct(R.inps) + (R.inpsInsidePit ? " (входит в НДФЛ)" : "") + ": " + fmt(r.inps) + " сум");
@@ -398,8 +409,31 @@ function evBlock(e) {
   if (list.length) h += '<div class="card">' + list.map(ev => '<div class="item"><div class="grow"><div class="nm">' + esc(evTitle(ev)) + '</div><div class="sb">' +
     (ev.type === "vac" ? "отпускные " : "за счёт работодателя ") + fmt(ev.amount) + " · начислено в " + esc(ymLabel(ev.payYm)) + '</div></div>' +
     '<button class="ib" data-act="delEv" data-id="' + ev.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + "</div>";
-  if (entryFor(e, ui.ym).type === "gph") return h + '<div class="hint">Для договора ГПХ отпуск и больничный не начисляются.</div>';
-  return h + '<div class="btns"><button class="btn sec2" data-act="vac">Отпускные…</button><button class="btn sec2" data-act="sick">Больничный…</button></div>';
+  const aids = (S.aids || []).filter(a => a.emp === e.id && a.ym === ui.ym);
+  if (aids.length) h += '<div class="card">' + aids.map(a => '<div class="item"><div class="grow"><div class="nm">Материальная помощь</div><div class="sb">' + fmt(a.amount) + ' сум · ' + esc(ymLabel(a.ym)) + '</div></div>' +
+    '<button class="ib" data-act="delAid" data-id="' + a.id + '" aria-label="Удалить" style="color:var(--bad)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>').join("") + "</div>";
+  if (entryFor(e, ui.ym).type === "gph") return h + '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button></div><div class="hint">Для договора ГПХ отпуск и больничный не начисляются.</div>';
+  return h + '<div class="btns"><button class="btn sec2" data-act="vac">Отпускные…</button><button class="btn sec2" data-act="sick">Больничный…</button></div>' +
+    '<div class="btns"><button class="btn sec2" data-act="aid">Материальная помощь…</button></div>';
+}
+function openAid() {
+  const e = curDraftEmp(); if (!e) return;
+  D = { kind: "aid", id: e.id };
+  openSheet('<h2>Материальная помощь</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
+    '<label class="f"><span>Сумма, сум</span><input class="in amt" id="a-amt" inputmode="numeric" autocomplete="off"></label>' +
+    '<div id="hr-prev"></div><div class="stack"><button class="btn" data-act="saveAid">Добавить в начисления</button></div>');
+  updAid();
+}
+function updAid() {
+  const el = $("#hr-prev"); if (!el || !D || D.kind !== "aid") return;
+  const e = curDraftEmp(), amt = parseAmt($("#a-amt").value), a = aidFor(e, ui.ym), pit = S.rules.pit;
+  D.amt = amt;
+  const free = Math.max(0, a.lim - a.before - a.aid), ex = Math.min(amt, free), tax = C.r0((amt - ex) * pit / 100);
+  el.innerHTML = '<div class="calc"><div class="l"><span>Предел без налога за ' + ui.ym.slice(0, 4) + ' год (4,22 МРОТ)</span><span class="num">' + fmt(a.lim) + '</span></div>' +
+    '<div class="l"><span>Уже выплачено в этом году</span><span class="num">' + fmt(a.before + a.aid) + '</span></div>' +
+    '<div class="l"><span>Не облагается налогом</span><span class="num">' + fmt(ex) + '</span></div>' +
+    '<div class="l t"><span>НДФЛ ' + pct(pit) + ' с остатка</span><span class="num">' + fmt(tax) + '</span></div></div>' +
+    '<div class="hint">Материальная помощь облагается только НДФЛ, ИНПС и соцналога нет (ст. 377, 378 НК). Предел считается по МРОТ на 1 января.</div>';
 }
 function openVac() {
   const e = curDraftEmp(); if (!e) return;
@@ -658,12 +692,12 @@ function viewRep() {
 function soliqHelp() {
   const last = repMonths().slice(-1)[0], yr = last.slice(0, 4);
   const cum = aggregate(Array.from({ length: +last.slice(5) }, (_, i) => yr + "-" + pad(i + 1)));
-  const rows = cum.rows.filter(x => x.gross - x.sick > 0);
+  const rows = cum.rows.filter(x => x.gross - x.sick - x.aid > 0);
   if (!rows.length) return "";
   const mon = aggregate([last]), R = rulesEff(last), it = R.itpark;
   const line = (a, b) => '<div class="l"><span>' + a + '</span><span class="num">' + b + '</span></div>';
-  const itCum = rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick, 0);
-  const itMon = mon.rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick, 0);
+  const itCum = rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick - x.aid, 0);
+  const itMon = mon.rows.filter(x => x.itExempt > 0).reduce((s, x) => s + x.gross - x.sick - x.aid, 0);
   let h = '<div class="sec">Вносится вручную в основной расчёт · ' + esc(ymLabel(last)) + '</div><div class="calc">' +
     line("Количество работников", rows.length) +
     line("ИНПС за месяц", fmt(mon.tot.inps)) + line("ИНПС с начала года", fmt(cum.tot.inps)) +
@@ -707,21 +741,27 @@ function exportSoliq() {
   // дата создания рабочего места: введённая вручную, иначе дата принятия; всё, что раньше 2025 года, — 01.01.2025 (требование шаблона)
   const created = e => { const d = e.wp || e.hire || e.from + "-01"; return d >= "2025-01-01" ? d.split("-").reverse().join(".") : "01.01.2025"; };
   // льготы: каждая занимает тройку граф (номер льготы, совокупный необлагаемый доход, в т.ч. за период), начиная с графы 15 (P)
-  const rows = cum.rows.filter(x => x.gross - x.sick > 0).map((x, i) => {
+  const rows = cum.rows.filter(x => x.gross - x.sick - x.aid > 0).map((x, i) => {
     const e = x.e, m = mon.get(e.id) || ZERO(), gph = x.type === "gph";
     const row = [i + 1, fullName(e), e.pos || null, e.pinfl || null, created(e), Number(e.res || 1), e.to && e.to <= last ? 2 : 1,
-      gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross - x.sick, m.gross - m.sick, x.pit - x.sickPit, m.pit - m.sickPit];   // пособие по ВН — не оплата труда, в приложение 4 не входит
+      gph ? 3 : Number(e.ck || 1), gph ? null : (e.rate || 1), gph ? null : Number(e.seat || 1), x.gross - x.sick - x.aid, m.gross - m.sick - m.aid, x.pit - x.sickPit - x.aidPit, m.pit - m.sickPit - m.aidPit];   // пособие по ВН и матпомощь — не оплата труда, в приложение 4 не входят
     const slots = [];
     if (!gph && x.itExempt > 0) slots.push([S.rules.benIdIt || null, x.itExempt, m.itExempt]);
     if (!gph && x.exempt > 0) slots.push([e.benId || S.rules.benId || null, x.exempt, m.exempt]);
     slots.forEach(s => row.push(s[0], s[1], s[2]));
     return row;
   });
+  // приложение 5: материальная помощь (вид дохода 5 — прочие), необлагаемая часть — льгота (ст. 378)
+  const aidRows = cum.rows.filter(x => x.aid > 0).map((x, i) => {
+    const e = x.e, m = mon.get(e.id) || ZERO();
+    return [i + 1, fullName(e), e.pinfl || null, Number(e.res || 1), x.aid, m.aid, 5, x.aidPit, m.aidPit]
+      .concat(x.aidEx > 0 ? [S.rules.benIdAid || null, x.aidEx, m.aidEx] : []);
+  });
   const noPin = cum.rows.filter(x => !x.e.pinfl).length;
   const noBenId = cum.rows.filter(x => x.type !== "gph" && x.exempt > 0 && !x.e.benId && !S.rules.benId).length;
   if (noBenId) setTimeout(() => toast("Льгота ст. 380: впишите номер льготы из кабинета (карточка сотрудника)"), 4200);
   sendFile((coPrefix() ? coPrefix() + "_" : "") + "Прил4_11101_20_" + ymLabel(last).replace(/\s+/g, "_") + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    window.fillTemplate(rows));
+    window.fillTemplate(rows, aidRows));
   if (noPin) setTimeout(() => toast("У " + noPin + " сотр. нет ПИНФЛ — допишите в файле или в приложении"), 1800);
 }
 function repText() {
@@ -765,6 +805,7 @@ function openRates() {
     '<div class="two">' + f("r-pit", "НДФЛ, %", R.pit) + f("r-inps", "ИНПС, %", R.inps) + '</div><div class="two">' + f("r-esp", "ЕСП, %", R.esp) + f("r-espb", "ЕСП бюджет, %", R.espBudget) + '</div>' +
     '<div class="sec" style="margin-top:4px">Резидент IT Park (трудовые договоры)</div><div class="two">' + f("r-pitit", "НДФЛ, %", R.pitIt) + f("r-espit", "ЕСП, %", R.espIt) + '</div>' +
     f("r-mrot", "МРОТ, сум (для подсказки и льготы ст. 380)", R.mrot) +
+    '<label class="f"><span>ID льготы НДФЛ: материальная помощь (приложение 5)</span><input class="in" id="r-benidaid" value="' + esc(R.benIdAid || "") + '"></label>' +
     '<label class="f"><span>Доп. праздничные дни (дд.мм.гггг через запятую)</span><input class="in" id="r-hol" value="' + esc((R.holExtra || []).map(isoToDmy).join(", ")) + '" placeholder="например, дни Хайита по постановлению" autocomplete="off"></label>' +
     '<div class="hint">Уже учтены 1 января, 8 марта, 21 марта, 9 мая, 1 сентября, 1 октября, 8 декабря. Дни Хайита и переносы добавьте здесь — они не считаются рабочими.</div>' +
     '<label class="f"><span>ID льготы НДФЛ: IT Park (для файла в кабинет)</span><input class="in" id="r-benidit" value="' + esc(R.benIdIt || "") + '"></label>' +
@@ -780,7 +821,7 @@ function saveRates() {
   const hol = $("#r-hol").value.split(/[,;\s]+/).filter(Boolean).map(parseDmy);
   if (hol.some(x => !x)) { toast("Праздничные дни: дд.мм.гггг через запятую"); return; }
   freezePast();
-  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim(), benIdIt: $("#r-benidit").value.trim(), holExtra: [...new Set(hol)].sort() });
+  Object.assign(S.rules, v, { inpsInsidePit: D.inside, inpsGph: D.gph, benId: $("#r-benid").value.trim(), benIdIt: $("#r-benidit").value.trim(), benIdAid: $("#r-benidaid").value.trim(), holExtra: [...new Set(hol)].sort() });
   save(); closeSheet(); render(); toast("Ставки сохранены");
 }
 
@@ -937,6 +978,15 @@ const ACT = {
     save(); closeSheet(); render();
   },
   vac: openVac, sick: openSick, saveVac: saveEvent, saveSick: saveEvent,
+  aid: openAid,
+  saveAid: () => {
+    if (!D || !(D.amt > 0)) { toast("Введите сумму"); return; }
+    const id = D.id; S.aids.push({ id: uid(), emp: id, ym: ui.ym, amount: D.amt }); save(); render(); openPay(id); toast("Добавлено в начисления");
+  },
+  delAid: t => {
+    if (!confirmBox("Удалить материальную помощь из начислений?")) return;
+    const id = D && D.id; S.aids = S.aids.filter(a => a.id !== t.dataset.id); save(); render(); if (id) openPay(id);
+  },
   delEv: t => {
     if (!confirmBox("Удалить эту запись об отпуске/больничном из начислений?")) return;
     const id = D && D.id;
@@ -949,6 +999,7 @@ const ACT = {
     if (!confirmBox("Удалить «" + fullName(e) + "» вместе с историей начислений? Для увольнения лучше указать «Последний месяц».")) return;
     S.emps = S.emps.filter(x => x.id !== e.id);
     S.events = (S.events || []).filter(ev => ev.emp !== e.id);
+    S.aids = (S.aids || []).filter(a => a.emp !== e.id);
     Object.values(S.months).forEach(m => { if (m.e) delete m.e[e.id]; });
     save(); closeSheet(); render(); toast("Удалено");
   },
@@ -998,6 +1049,7 @@ document.addEventListener("input", ev => {
   if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
   if (el.id === "v-days" || el.id === "v-avg" || el.id === "s-avg") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; if (el.id !== "v-days") D.avgTouched = true; }
   if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
+  if (el.id === "a-amt") { const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; updAid(); }
   if (el.id === "f-amt") {
     const d = el.value.replace(/\D/g, ""); el.value = d ? fmt(+d) : ""; el.classList.remove("bad"); updPreview();
   } else if (el.id === "f-ben") updPreview();
