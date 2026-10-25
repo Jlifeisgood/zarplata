@@ -93,6 +93,49 @@
     return { months: wm.months, rest: wm.rest, start: wm.start, earned: earned, days: days, sun: sun, paid: paid, pay: (days < 0 ? -1 : 1) * r2(o.avg / DIV * paid) };
   }
 
-  var api = { addMonths: addMonths, workMonths: workMonths, compensation: compensation, DIV: DIV, FIXED: FIXED, addDays: addDays, isSunday: isSunday, isHoliday: isHoliday, isWorkDay: isWorkDay, workDays: workDays, eachDay: eachDay, vacation: vacation, sick: sick };
+  /**
+   * Учёт по часам. hrs — часы по дням недели [пн … вс]. Накануне праздничного дня смена короче на 1 час (ТК ст. 187), в праздник — 0.
+   */
+  function planHours(s, hrs, extra, preHol) {
+    if (isHoliday(s, extra)) return 0;
+    var h = +hrs[(toDate(s).getDay() + 6) % 7] || 0;
+    if (h > 0 && preHol && isHoliday(addDays(s, 1), extra)) h = Math.max(0, h - 1);
+    return h;
+  }
+  /**
+   * Часы месяца. o: { ym, hrs, extra, preHol, from, to, day(s) → { st: 'work'|'abs'|'unp'|'trip'|'vac'|'sick', h, n } | null }
+   * h — фактически отработано (нет записи → по графику), n — из них ночных (22:00–06:00).
+   * norm — норма за весь месяц, plan — по графику в пределах [from, to], lost — не оплачивается (прогул, за свой счёт, отпуск и больничный
+   * оплачиваются отдельно, недоработка), ot1/ot2 — сверхурочные: первые 2 часа дня и остальные (ст. 262), wk — часы в выходные и праздники (ст. 263), night — ночные (ст. 264).
+   */
+  function hoursMonth(o) {
+    var last = new Date(+o.ym.slice(0, 4), +o.ym.slice(5, 7), 0).getDate(), t = { norm: 0, plan: 0, lost: 0, ot1: 0, ot2: 0, wk: 0, night: 0 };
+    for (var d = 1; d <= last; d++) {
+      var s = o.ym + "-" + pad(d), p = planHours(s, o.hrs, o.extra, o.preHol);
+      t.norm += p;
+      if ((o.from && s < o.from) || (o.to && s > o.to)) continue;
+      t.plan += p;
+      var r = o.day ? o.day(s) : null, st = (r && r.st) || "work";
+      if (st === "abs" || st === "unp" || st === "vac" || st === "sick") { t.lost += p; continue; }
+      var h = st !== "trip" && r && r.h != null ? r.h : p;
+      if (p > 0) {
+        if (h < p) t.lost += p - h;
+        else if (h > p) { var x = h - p; t.ot1 += Math.min(x, 2); t.ot2 += Math.max(0, x - 2); }
+      } else t.wk += h;
+      if (r && r.n) t.night += Math.min(r.n, h);
+    }
+    return t;
+  }
+  /**
+   * Доплаты по часам (в суммах, сверх основной оплаты). rate — часовая ставка; hourly — оплата за час: часы в выходной оплачиваются
+   * в двойном размере (ст. 263), для окладника — одинарная ставка сверх оклада. Сверхурочные (в норму не входят): первые 2 часа ×1,5,
+   * дальше ×2 (ст. 262); ночные — +0,5 ставки за каждый час (ст. 264).
+   */
+  function hoursPay(h, rate, hourly) {
+    var ot = rate * (1.5 * h.ot1 + 2 * h.ot2), wk = rate * (hourly ? 2 : 1) * h.wk, night = rate * 0.5 * h.night;
+    return { ot: r2(ot), wk: r2(wk), night: r2(night), total: r2(r2(ot) + r2(wk) + r2(night)) };
+  }
+
+  var api = { planHours: planHours, hoursMonth: hoursMonth, hoursPay: hoursPay, addMonths: addMonths, workMonths: workMonths, compensation: compensation, DIV: DIV, FIXED: FIXED, addDays: addDays, isSunday: isSunday, isHoliday: isHoliday, isWorkDay: isWorkDay, workDays: workDays, eachDay: eachDay, vacation: vacation, sick: sick };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.HR = api;
 })(typeof window !== "undefined" ? window : this);

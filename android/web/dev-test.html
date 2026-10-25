@@ -71,6 +71,16 @@ const s2 = HR.sick({ from: "2026-09-07", to: "2026-09-08", avg: 20000000, mrot: 
 eq([s2.capped, s2.avgUsed, s2.base], [true, 13600000, 1], "больничный: предел 10 МРОТ и +20 п.п.");
 const s3 = HR.sick({ from: "2026-12-30", to: "2027-01-05", avg: 6000000, mrot: 1360000, long: false, prevDays: 300 });
 eq(s3.over > 0 || s3.empDays > 0, true, "больничный: сброс счётчика на новый год");
+// часы: 5-дневка 8 ч, накануне праздника на час короче (ст. 187)
+const H5 = [8, 8, 8, 8, 8, 0, 0], H6 = [7, 7, 7, 7, 7, 5, 0];
+eq([HR.planHours("2026-09-30", H5, [], true), HR.planHours("2026-09-30", H5, [], false), HR.planHours("2026-10-01", H5, [], true), HR.planHours("2026-10-03", H6, [], true), HR.planHours("2026-10-04", H6, [], true)], [7, 8, 0, 5, 0], "план часов дня");
+eq([HR.hoursMonth({ ym: "2026-10", hrs: H5, preHol: true }).norm, HR.hoursMonth({ ym: "2026-09", hrs: H5, preHol: true }).norm, HR.hoursMonth({ ym: "2026-10", hrs: H6, preHol: true }).norm], [168, 167, 7 * 21 + 5 * 5], "норма часов месяца");
+const rec = { "2026-10-05": { st: "work", h: 11 }, "2026-10-04": { st: "work", h: 5 }, "2026-10-06": { st: "work", h: 8, n: 2 }, "2026-10-07": { st: "abs" }, "2026-10-08": { st: "work", h: 6 }, "2026-10-09": { st: "vac" } };
+const hm = HR.hoursMonth({ ym: "2026-10", hrs: H5, preHol: true, day: s => rec[s] || null });
+eq(hm, { norm: 168, plan: 168, lost: 8 + 2 + 8, ot1: 2, ot2: 1, wk: 5, night: 2 }, "часы: сверхурочные, выходной, ночные, прогул, недоработка, отпуск");
+eq(HR.hoursMonth({ ym: "2026-10", hrs: H5, preHol: true, from: "2026-10-15", to: "2026-10-31" }).plan, 12 * 8, "часы с 15.10");
+eq([HR.hoursPay(hm, 1000, false), HR.hoursPay(hm, 1000, true).wk], [{ ot: 5000, wk: 5000, night: 1000, total: 11000 }, 10000], "доплаты по часам (ст. 262–264)");
+eq(HR.hoursMonth({ ym: "2026-10", hrs: H5, preHol: true, day: s => (s === "2026-10-05" ? { st: "trip", h: 20 } : null) }).ot1, 0, "командировка — по графику");
 eq(calc({ amount: "abc", mode: "net", type: "trud" }).gross, 0, "garbage");
 eq(calc({ amount: -5, mode: "gross", type: "trud" }).net, 0, "negative");
 document.getElementById("o").textContent = (fails ? out.join("\n") : "ALL OK (" + cnt + " reverse cases)");

@@ -62,7 +62,7 @@ const ICON = {
    список компаний, активная и тема — в общем реестре (zarplata.reg). S — данные активной компании. */
 const REG_KEY = "zarplata.reg", CO_KEY = id => "zarplata.c." + id;
 function blank() {
-  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [], pays: [], deds: [], marks: [] };
+  return { v: 1, rv: 2, setup: false, company: { name: "", inn: "", split: false }, rules: Object.assign({}, C.DEFAULT_RULES, { holExtra: [] }), emps: [], months: {}, events: [], aids: [], people: [], pays: [], deds: [], marks: [], hours: [] };
 }
 function normalize(s) {
   if (!s || s.v !== 1 || !Array.isArray(s.emps)) return null;
@@ -74,6 +74,7 @@ function normalize(s) {
   s.aids = s.aids || [];                           // прочие доходы физлиц: { id, emp (сотрудник или физлицо), ym, amount, kind }
   s.people = s.people || [];                       // физлица без трудового договора: { id, name, pinfl }
   s.marks = s.marks || [];                         // табель: { emp, d: 'ГГГГ-ММ-ДД', c: 'abs' | 'unp' | 'trip' }
+  s.hours = s.hours || [];                         // табель по часам: { emp, d, h (отработано часов), n (из них ночных) }
   s.pays = s.pays || [];                           // выплаты: { id, emp, ym, amount, kind, date }
   s.deds = s.deds || [];                           // удержания: { id, emp, ym, amount, kind, note }
   s.rules.holExtra = s.rules.holExtra || [];
@@ -115,7 +116,33 @@ const empActive = (e, ym) => e.from <= ym && (!e.to || ym <= e.to);
    frac < 1 — неполный месяц: оклад начисляется пропорционально рабочим дням (ТК РУз), если сумму за месяц не задали вручную. */
 const empWd = e => (e.wd === 6 ? 6 : 5);
 const monthEnd = ym => ym + "-" + pad(new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate());
+/* Учёт по часам (только трудовой договор): e.hrs — часы по дням недели пн…вс; e.basis === "hour" — сумма в карточке это ставка за час */
+const hrsOn = e => Array.isArray(e.hrs) && e.type !== "gph";
+const defHrs = wd => (wd === 6 ? [7, 7, 7, 7, 7, 5, 0] : [8, 8, 8, 8, 8, 0, 0]);
+const fmtH = x => String(Math.round(x * 100) / 100).replace(".", ",");
+/* Состояние дня без учёта выходных: out / vac / sick / abs / unp / trip / work */
+function rawState(e, d) {
+  const hire = e.hire || e.from + "-01";
+  if (d < hire || (e.fire && d > e.fire)) return "out";
+  const ev = (S.events || []).find(v => v.emp === e.id && v.type !== "comp" && d >= v.from && d <= v.to);
+  if (ev) return ev.type === "vac" ? "vac" : "sick";
+  const k = (S.marks || []).find(x => x.emp === e.id && x.d === d);
+  return k ? k.c : "work";
+}
+const hoursRec = (e, d) => (S.hours || []).find(x => x.emp === e.id && x.d === d);
+function hoursInfo(e, ym) {
+  const ms = ym + "-01", me = monthEnd(ym), hire = e.hire || (e.from + "-01");
+  const from = hire > ms ? hire : ms, to = e.fire && e.fire < me ? e.fire : me;
+  const rec = {};
+  (S.hours || []).forEach(x => { if (x.emp === e.id && x.d.slice(0, 7) === ym) rec[x.d] = x; });
+  return HR.hoursMonth({ ym, hrs: e.hrs, extra: S.rules.holExtra || [], preHol: true, from, to,
+    day: s => { const r = rec[s]; return { st: rawState(e, s), h: r ? r.h : null, n: r ? r.n : 0 }; } });
+}
 function dayInfo(e, ym) {
+  if (hrsOn(e)) {
+    const hi = hoursInfo(e, ym), W = hi.norm;
+    return { W, worked: hi.plan, abs: hi.lost, frac: W ? Math.max(0, Math.min(1, (hi.plan - hi.lost) / W)) : 1, hours: true, hi };
+  }
   const wd = empWd(e), ex = S.rules.holExtra || [], ms = ym + "-01", me = monthEnd(ym);
   const W = HR.workDays(ym, wd, ex);
   const hire = e.hire || (e.from + "-01");
@@ -141,18 +168,32 @@ function entryFor(e, ym) {
   const type = (m && m.type) || e.type;
   const explicit = !!(m && !m.fz && m.amount != null);      // сумму за месяц ввели вручную — пропорцию не применяем
   const base = m && m.amount != null ? m.amount : e.amount;
+  const hourly = hrsOn(e) && ((m && m.fz && m.basis) || e.basis) === "hour", rate = hourly ? (m && m.fz && m.amount != null ? m.amount : e.amount) : 0;
   let amount = base, di = null;
-  if (!explicit && type !== "gph") { di = dayInfo(e, ym); if (di.frac < 1) amount = C.r2(base * di.frac); }
+  if (hourly && !explicit) { di = dayInfo(e, ym); amount = C.r2(rate * Math.max(0, di.worked - di.abs)); }
+  else if (!explicit && type !== "gph") { di = dayInfo(e, ym); if (di.frac < 1) amount = C.r2(base * di.frac); }
   return {
-    amount, base,
-    mode: (m && m.mode) || e.mode,
+    amount, base, hourly, rate,
+    mode: hourly ? "gross" : (m && m.mode) || e.mode,
     type,
     dept: (m && m.dept) || e.dept,
     ben: m && m.ben != null ? m.ben : (e.ben || ""),
     skip: !!(m && m.skip),
     custom: !!m && !m.fz,
-    day: di && di.frac < 1 ? di : null
+    day: di && (di.frac < 1 || hourly) ? di : null
   };
+}
+/* Доплаты по часам за месяц: сверхурочные, работа в выходные и праздники, ночные (ТК ст. 262–264). Часовая ставка: ставка из карточки
+   или оклад (начислено) ÷ норма часов месяца. */
+function hoursPremium(e, ym) {
+  const z = { ot: 0, wk: 0, night: 0, total: 0, hi: null, rate: 0 };
+  if (!hrsOn(e) || !empActive(e, ym)) return z;
+  const en = entryFor(e, ym);
+  if (en.skip) return z;
+  const hi = hoursInfo(e, ym);
+  let rate = en.hourly ? en.rate : 0;
+  if (!en.hourly && hi.norm > 0) rate = C.calc({ amount: en.base, mode: en.mode, type: en.type }, rulesEff(ym)).gross / hi.norm;
+  return Object.assign(HR.hoursPay(hi, rate, en.hourly), { hi, rate });
 }
 /* МРОТ на месяц: до 01.09.2026 действовал прежний (УП-91: 1 271 000), если пользователь не менял значение вручную */
 const mrotFor = (ym, R) => (R.mrot === C.DEFAULT_RULES.mrot && ym < "2026-09") ? 1271000 : R.mrot;
@@ -178,7 +219,7 @@ function freezePast() {
     if (!m.rules) m.rules = Object.assign({}, S.rules);
     if (!m.e) m.e = {};
     S.emps.forEach(e => {
-      if (empActive(e, ym) && !m.e[e.id]) m.e[e.id] = { amount: e.amount, mode: e.mode, type: e.type, dept: e.dept, ben: e.ben || "", fz: true };
+      if (empActive(e, ym) && !m.e[e.id]) m.e[e.id] = { amount: e.amount, mode: e.mode, type: e.type, dept: e.dept, ben: e.ben || "", basis: e.basis === "hour" ? "hour" : "month", fz: true };
     });
   }
 }
@@ -196,11 +237,11 @@ function evExtras(e, ym) {
   let extra = 0, sick = 0;
   (S.events || []).forEach(ev => { if (ev.emp === e.id && ev.payYm === ym) { if (ev.type === "sick") sick += ev.amount; else extra += ev.amount; } });
   const a = aidFor(e, ym);
-  return { extra, sick, aid: a.aid, aidEx: a.aidEx };
+  return { extra, sick, aid: a.aid, aidEx: a.aidEx, prem: hoursPremium(e, ym).total };
 }
 function calcEntry(e, ym) {
   const en = entryFor(e, ym), x = evExtras(e, ym);
-  const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0, extra: x.extra, sick: x.sick, aid: x.aid, aidExempt: x.aidEx }, rulesEff(ym));
+  const r = C.calc({ amount: en.amount, mode: en.mode, type: en.type, benefit: Number(en.ben) || 0, extra: x.extra + x.prem, sick: x.sick, aid: x.aid, aidExempt: x.aidEx }, rulesEff(ym));
   return { en, r, x };
 }
 /* Средняя месячная зарплата за 12 календарных месяцев перед месяцем startIso (ТК ст. 257): оплата труда без отпускных и пособий,
@@ -261,8 +302,9 @@ function breakdown(r, rules, type, x) {
   const rt = C.rates(rules, type), espR = rt.esp;
   x = x || { extra: 0, sick: 0, aid: 0, aidEx: 0 };
   let h = '<div class="calc">';
-  if (x.extra || x.sick || x.aid) {
-    h += '<div class="l"><span>Оплата труда за месяц</span><span class="num">' + fmt(r.gross - x.extra - x.sick - x.aid) + '</span></div>';
+  if (x.extra || x.sick || x.aid || x.prem) {
+    h += '<div class="l"><span>Оплата труда за месяц</span><span class="num">' + fmt(r.gross - x.extra - x.sick - x.aid - (x.prem || 0)) + '</span></div>';
+    if (x.prem) h += '<div class="l"><span>Доплаты за часы (сверхурочные, выходные, ночные)</span><span class="num">' + fmt(x.prem) + '</span></div>';
     if (x.extra) h += '<div class="l"><span>Отпускные</span><span class="num">' + fmt(x.extra) + '</span></div>';
     if (x.sick) h += '<div class="l"><span>Больничный (за счёт работодателя)</span><span class="num">' + fmt(x.sick) + '</span></div>';
     if (x.aid) h += '<div class="l"><span>Материальная помощь (без налога ' + fmt(x.aidEx) + ')</span><span class="num">' + fmt(x.aid) + '</span></div>';
@@ -327,11 +369,11 @@ function monthRows(ym) {
 function payItem(x) {
   const { e, en, r } = x;
   const t = en.type === "gph" ? '<span class="badge warn">ГПХ</span>' : "";
-  const part = en.day ? "неполный месяц: " + Math.max(0, en.day.worked - en.day.abs) + " из " + en.day.W + " раб. дн." : "";
-  const sub = en.skip ? "не начисляется в этом месяце" : (part || (e.pos ? esc(e.pos) + " · " : "") + "начислено " + fmt(r.gross)) + (x.x.extra ? " · отпускные" : "") + (x.x.sick ? " · больничный" : "") +
+  const part = en.day ? (en.day.hours ? (en.hourly ? "оплачено " : "неполный месяц: ") + fmtH(Math.max(0, en.day.worked - en.day.abs)) + " из " + fmtH(en.day.W) + " ч" : "неполный месяц: " + Math.max(0, en.day.worked - en.day.abs) + " из " + en.day.W + " раб. дн.") : "";
+  const sub = en.skip ? "не начисляется в этом месяце" : (part || (e.pos ? esc(e.pos) + " · " : "") + "начислено " + fmt(r.gross)) + (x.x.prem ? " · доплаты" : "") + (x.x.extra ? " · отпускные" : "") + (x.x.sick ? " · больничный" : "") +
     (!en.skip && x.p.due > 0 ? (x.p.left <= 0 ? " · выплачено" : x.p.paid > 0 ? " · осталось " + fmt(x.p.left) : "") : "");
   return '<button class="item ' + (en.skip ? "off" : "") + '" data-act="openPay" data-id="' + e.id + '"><div class="av ' + (S.company.split ? en.dept : "") + '">' + esc(initials(e)) + '</div>' +
-    '<div class="grow"><div class="nm">' + esc(shortName(e)) + t + (en.custom && !en.skip ? '<span class="badge">изменено</span>' : en.day && !en.skip ? '<span class="badge warn">неполный</span>' : "") + '</div><div class="sb">' + sub + '</div></div>' +
+    '<div class="grow"><div class="nm">' + esc(shortName(e)) + t + (en.custom && !en.skip ? '<span class="badge">изменено</span>' : en.day && !en.skip && !en.hourly ? '<span class="badge warn">неполный</span>' : "") + '</div><div class="sb">' + sub + '</div></div>' +
     '<div class="r"><b class="num">' + (en.skip ? "—" : fmt(r.net)) + '</b><span>на руки</span></div></button>';
 }
 function viewPay() {
@@ -382,15 +424,30 @@ function deadlineNote() {
 }
 const remOn = () => ui.rem !== undefined ? ui.rem : (A && A.remindersOn ? A.remindersOn() : (() => { try { return localStorage.getItem("zarplata.rem") === "1"; } catch (e) { return false; } })());
 
+/* Блок «часы» в карточке начисления: норма, оплаченные часы и доплаты */
+function hoursNote(e, en) {
+  if (!hrsOn(e) || en.skip) return "";
+  const p = hoursPremium(e, ui.ym), hi = p.hi, paid = Math.max(0, hi.plan - hi.lost), L = [];
+  const row = (a, b, strong) => '<div class="l' + (strong ? " t" : "") + '"><span>' + a + '</span><span class="num">' + b + '</span></div>';
+  L.push(row("Норма часов в месяце", fmtH(hi.norm) + " ч"));
+  if (en.hourly) L.push(row("Оплачено по ставке " + fmt(en.rate) + " за час", fmtH(paid) + " ч · " + fmt(en.amount)));
+  else if (paid < hi.norm) L.push(row("Оплачено часов по окладу", fmtH(paid) + " из " + fmtH(hi.norm) + " ч"));
+  if (hi.ot1 + hi.ot2) L.push(row("Сверхурочные: " + fmtH(hi.ot1) + " ч × 1,5" + (hi.ot2 ? " + " + fmtH(hi.ot2) + " ч × 2" : ""), fmt(p.ot)));
+  if (hi.wk) L.push(row("Работа в выходной/праздник: " + fmtH(hi.wk) + " ч", fmt(p.wk)));
+  if (hi.night) L.push(row("Ночные: " + fmtH(hi.night) + " ч × 0,5", fmt(p.night)));
+  if (p.total) L.push(row("Доплаты за часы", fmt(p.total), true));
+  return '<div class="calc">' + L.join("") + '</div>' + (en.hourly ? '<div class="hint">Часы берутся из табеля. Сумму выше можно задать вручную — доплаты за сверхурочные и выходные всё равно добавятся.</div>' : "");
+}
 function openPay(id) {
   const e = S.emps.find(x => x.id === id); if (!e) return;
   const en = entryFor(e, ui.ym);
   D = { kind: "pay", id, mode: en.mode, skip: en.skip, amt: en.amount };
   openSheet('<h2>' + esc(fullName(e)) + '</h2><p class="sub">' + ymLabel(ui.ym) + (en.type === "gph" ? " · договор ГПХ" : "") + '</p>' +
-    seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки"]]) +
+    (en.hourly ? "" : seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки"]])) +
     '<div style="height:12px"></div><label class="f"><span>' + (D.mode === "net" ? "Сумма на руки" : "Сумма начисления") + '</span><input class="in amt" id="f-amt" inputmode="decimal" value="' + (en.amount ? fmt(en.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
-    (en.day ? '<div class="hint">Неполный месяц: оклад пересчитан на ' + Math.max(0, en.day.worked - en.day.abs) + ' из ' + en.day.W + ' рабочих дней (по графику ' + empWd(e) + '-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.</div>' : "") +
+    hoursNote(e, en) +
+    (en.day && !en.day.hours ? '<div class="hint">Неполный месяц: оклад пересчитан на ' + Math.max(0, en.day.worked - en.day.abs) + ' из ' + en.day.W + ' рабочих дней (по графику ' + empWd(e) + '-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.</div>' : "") +
     '<div class="btns"><button class="btn" data-act="savePay">Сохранить</button></div>' +
     '<div class="btns"><button class="btn sec2" data-act="slip">' + ICON.share + 'Расчётный листок</button></div>' +
     evBlock(e) + payBlock(e) +
@@ -401,13 +458,18 @@ function openPay(id) {
 function curDraftEmp() { return S.emps.find(x => x.id === (D && D.id)); }
 function updPreview() {
   const el = $("#prev"); if (!el || !D) return;
-  const amt = parseAmt($("#f-amt").value);
+  let amt = parseAmt($("#f-amt").value);
   let type, ben, rules, hint = "";
+  if (isHourlyDraft() && D.basis === "hour") {      // ставка за час → пример за месяц по норме
+    const nm = HR.hoursMonth({ ym: ui.ym, hrs: D.hrs, extra: S.rules.holExtra || [], preHol: true }).norm;
+    hint = '<div class="hint">Пример за ' + esc(ymLabel(ui.ym)) + ': ' + fmt(amt) + ' × ' + fmtH(nm) + ' ч нормы.</div>';
+    amt = C.r2(amt * nm);
+  }
   let x = { extra: 0, sick: 0, aid: 0, aidEx: 0 };
   if (D.kind === "pay") { const e = curDraftEmp(), en = entryFor(e, ui.ym); type = en.type; ben = en.ben; rules = rulesEff(ui.ym); x = evExtras(e, ui.ym); }
   else { type = D.type; ben = $("#f-ben") ? $("#f-ben").value : ""; rules = rulesEff(curYm()); }
-  const r = C.calc({ amount: amt, mode: D.mode, type, benefit: Number(ben) || 0, extra: x.extra, sick: x.sick, aid: x.aid, aidExempt: x.aidEx }, rules);
-  if (amt > 0 && type === "trud" && r.gross - x.extra - x.sick - x.aid < rules.mrot && !(D.kind === "pay" && entryFor(curDraftEmp(), ui.ym).day)) hint = '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
+  const r = C.calc({ amount: amt, mode: D.mode, type, benefit: Number(ben) || 0, extra: x.extra + (x.prem || 0), sick: x.sick, aid: x.aid, aidExempt: x.aidEx }, rules);
+  if (amt > 0 && type === "trud" && r.gross - x.extra - x.sick - x.aid < rules.mrot && !(D.kind === "pay" && entryFor(curDraftEmp(), ui.ym).day)) hint += '<div class="hint warn">Начисление меньше МРОТ (' + fmt(rules.mrot) + ' сум). Для полной ставки это недопустимо; при неполной ставке — нормально.</div>';
   el.innerHTML = amt > 0 ? breakdown(r, rules, type, x) + hint : '<div class="hint">Введите сумму — ниже появится расчёт.</div>';
 }
 function savePay() {
@@ -424,8 +486,9 @@ function savePay() {
 function payslip(e) {
   const { en, r, x } = calcEntry(e, ui.ym), R = rulesEff(ui.ym);
   const L = ["Расчётный листок", S.company.name ? "Компания: " + S.company.name : "", "Сотрудник: " + fullName(e), "Период: " + ymLabel(ui.ym), ""];
-  if (x.extra || x.sick || x.aid) {
-    L.push("Оплата труда: " + fmt(r.gross - x.extra - x.sick - x.aid) + " сум");
+  if (x.extra || x.sick || x.aid || x.prem) {
+    L.push("Оплата труда: " + fmt(r.gross - x.extra - x.sick - x.aid - x.prem) + " сум");
+    if (x.prem) L.push("Доплаты за часы: " + fmt(x.prem) + " сум");
     if (x.extra) L.push("Отпускные: " + fmt(x.extra) + " сум");
     if (x.sick) L.push("Больничный (за счёт работодателя): " + fmt(x.sick) + " сум");
     if (x.aid) L.push("Материальная помощь: " + fmt(x.aid) + " сум (без налога " + fmt(x.aidEx) + ")");
@@ -442,26 +505,51 @@ function payslip(e) {
 /* ---------- табель ---------- */
 const MARKS = [["abs", "П", "Прогул", "не оплачивается"], ["unp", "Б", "За свой счёт", "без сохранения зарплаты"], ["trip", "К", "Командировка", "оплачивается"]];
 const TAB_ORDER = [null, "abs", "unp", "trip"];
+const planOf = (e, d) => HR.planHours(d, e.hrs, S.rules.holExtra || [], true);
 function tabState(e, d) {
-  const hire = e.hire || e.from + "-01";
-  if (d < hire || (e.fire && d > e.fire)) return "out";
-  const ev = (S.events || []).find(v => v.emp === e.id && v.type !== "comp" && d >= v.from && d <= v.to);
-  if (ev) return ev.type === "vac" ? "vac" : "sick";
+  const st = rawState(e, d);
+  if (st === "out" || st === "vac" || st === "sick") return st;
+  if (hrsOn(e)) return st === "work" && planOf(e, d) === 0 && !hoursRec(e, d) ? "off" : st;
   if (!HR.isWorkDay(d, empWd(e), S.rules.holExtra || [])) return "off";
-  const k = (S.marks || []).find(x => x.emp === e.id && x.d === d);
-  return k ? k.c : "work";
+  return st;
 }
 function tabGrid(e) {
-  const ym = ui.ym, last = +monthEnd(ym).slice(8), first = new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).getDay(), lead = (first + 6) % 7;
-  let h = '<div class="tgrid">' + ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"].map(x => '<div class="th">' + x + '</div>').join("") + '<div></div>'.repeat(lead);
+  const ym = ui.ym, last = +monthEnd(ym).slice(8), first = new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).getDay(), lead = (first + 6) % 7, hon = hrsOn(e);
+  let h = '<div class="tgrid">' + DOW.map(x => '<div class="th">' + x + '</div>').join("") + '<div></div>'.repeat(lead);
   for (let d = 1; d <= last; d++) {
     const date = ym + "-" + pad(d), st = tabState(e, date), m = MARKS.find(x => x[0] === st);
-    const lab = m ? m[1] : st === "vac" ? "О" : st === "sick" ? "Бл" : "";
-    h += '<button type="button" class="td ' + st + '" data-act="mark" data-d="' + date + '"><b>' + d + '</b><i>' + lab + '</i></button>';
+    let lab = m ? m[1] : st === "vac" ? "О" : st === "sick" ? "Бл" : "";
+    if (hon && st === "work") { const r = hoursRec(e, date); lab = fmtH(r ? r.h : planOf(e, date)); }
+    h += '<button type="button" class="td ' + st + (hon && ui.tabDay === date ? " sel" : "") + '" data-act="mark" data-d="' + date + '"><b>' + d + '</b><i>' + lab + '</i></button>';
   }
   return h + "</div>";
 }
+/* Редактор дня (режим «по часам»): состояние, отработанные часы, ночные */
+function tabEditor(e) {
+  const d = ui.tabDay; if (!hrsOn(e) || !d || d.slice(0, 7) !== ui.ym) return "";
+  const st0 = tabState(e, d);
+  if (st0 === "out" || st0 === "vac" || st0 === "sick") return "";
+  const r = hoursRec(e, d), p = planOf(e, d);
+  if (ui.tabSt == null) ui.tabSt = st0 === "off" ? "work" : st0;
+  const opts = [["work", "Работал"], ["abs", "Прогул"], ["unp", "За свой счёт"], ["trip", "Командировка"]];
+  return '<div class="calc"><div class="l t"><span>' + d.slice(8) + "." + d.slice(5, 7) + " · " + DOW[(new Date(d).getDay() + 6) % 7] + (st0 === "off" ? " (выходной)" : "") + '</span><span class="num">по графику ' + fmtH(p) + ' ч</span></div></div>' +
+    seg("tst", ui.tabSt, opts, "tabSt") +
+    (ui.tabSt === "work" ? '<div class="two"><label class="f"><span>Отработано, ч</span><input class="in" id="t-h" inputmode="decimal" value="' + (r ? fmtH(r.h) : p ? fmtH(p) : "") + '"></label>' +
+      '<label class="f"><span>Из них ночью (22–06), ч</span><input class="in" id="t-n" inputmode="decimal" value="' + (r && r.n ? fmtH(r.n) : "") + '" placeholder="0"></label></div>' +
+      '<div class="hint">Больше графика — сверхурочные (первые 2 часа ×1,5, дальше ×2); в выходной или праздник — доплата за каждый час; ночные — +50%.</div>' : "") +
+    '<div class="two"><button class="btn" data-act="tabSave">Записать день</button><button class="btn ghost" data-act="tabReset">По графику</button></div>';
+}
+function tabSummaryH(e) {
+  const p = hoursPremium(e, ui.ym), en = entryFor(e, ui.ym), hi = p.hi || hoursInfo(e, ui.ym), paid = Math.max(0, hi.plan - hi.lost);
+  const row = (a, b, t) => '<div class="l' + (t ? " t" : "") + '"><span>' + a + '</span><span class="num">' + b + '</span></div>';
+  return '<div class="calc">' + row("Норма часов в месяце", fmtH(hi.norm) + " ч") + row("Не оплачивается (прогул, за свой счёт, недоработка)", fmtH(hi.lost) + " ч") +
+    row("Оплачивается по " + (en.hourly ? "ставке" : "окладу"), fmtH(paid) + " ч", true) +
+    (hi.ot1 + hi.ot2 ? row("Сверхурочные", fmtH(hi.ot1 + hi.ot2) + " ч · " + fmt(p.ot)) : "") + (hi.wk ? row("В выходные и праздники", fmtH(hi.wk) + " ч · " + fmt(p.wk)) : "") +
+    (hi.night ? row("Ночные", fmtH(hi.night) + " ч · " + fmt(p.night)) : "") +
+    row(en.hourly ? "Оплата по ставке" : "Оклад за месяц", fmt(en.amount)) + (p.total ? row("Доплаты за часы", fmt(p.total)) : "") + '</div>';
+}
 function tabSummary(e) {
+  if (hrsOn(e)) return tabSummaryH(e);
   const di = dayInfo(e, ui.ym), en = entryFor(e, ui.ym), marks = (S.marks || []).filter(k => k.emp === e.id && k.d.slice(0, 7) === ui.ym);
   const cnt = c => marks.filter(k => k.c === c && tabState(e, k.d) === c).length;
   return '<div class="calc"><div class="l"><span>Рабочих дней по графику (' + empWd(e) + '-дневка)</span><span class="num">' + di.W + '</span></div>' +
@@ -473,18 +561,50 @@ function tabSummary(e) {
 function openTabel() {
   const e = curDraftEmp(); if (!e) return;
   D = { kind: "tabel", id: e.id };
-  openSheet('<h2>Табель</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + '</p>' +
-    '<div class="hint" style="margin-top:0">Нажимайте на день: прогул → за свой счёт → командировка → рабочий. Выходные и праздники отмечены сами, отпуск и больничный берутся из карточки.</div>' +
-    '<div id="tab-grid"></div><div class="tlegend"><span class="td abs">П</span> прогул <span class="td unp">Б</span> за свой счёт <span class="td trip">К</span> командировка <span class="td vac">О</span> отпуск <span class="td sick">Бл</span> больничный</div>' +
+  ui.tabDay = null; ui.tabSt = null;
+  const hon = hrsOn(e);
+  openSheet('<h2>Табель</h2><p class="sub">' + esc(fullName(e)) + ' · ' + esc(ymLabel(ui.ym)) + (hon ? " · по часам" : "") + '</p>' +
+    '<div class="hint" style="margin-top:0">' + (hon ? "Нажмите на день, чтобы записать отработанные часы, ночные или отметить прогул. В клетке — часы за день (по графику, если ничего не вводили). Праздники и выходные отмечены сами, отпуск и больничный берутся из карточки."
+      : "Нажимайте на день: прогул → за свой счёт → командировка → рабочий. Выходные и праздники отмечены сами, отпуск и больничный берутся из карточки.") + '</div>' +
+    '<div id="tab-grid"></div><div id="tab-ed"></div><div class="tlegend"><span class="td abs">П</span> прогул <span class="td unp">Б</span> за свой счёт <span class="td trip">К</span> командировка <span class="td vac">О</span> отпуск <span class="td sick">Бл</span> больничный</div>' +
     '<div id="tab-sum"></div><div class="stack"><button class="btn" data-act="tabDone">Готово</button></div>');
   updTabel();
 }
 function updTabel() {
   const e = curDraftEmp(); if (!e || !$("#tab-grid")) return;
   $("#tab-grid").innerHTML = tabGrid(e); $("#tab-sum").innerHTML = tabSummary(e);
+  const ed = $("#tab-ed"); if (ed) ed.innerHTML = tabEditor(e);
+}
+function tabSave() {
+  const e = curDraftEmp(), d = ui.tabDay; if (!e || !d) return;
+  const num = id => { const v = $(id) ? $(id).value.trim().replace(",", ".") : ""; return v === "" ? null : Number(v); };
+  let h = null, n = 0;
+  if (ui.tabSt === "work") {
+    h = num("#t-h"); n = num("#t-n") || 0;
+    if ((h !== null && !(h >= 0 && h <= 24)) || !(n >= 0)) { toast("Часы — число от 0 до 24"); return; }
+    if (h !== null && n > h) { toast("Ночных часов больше, чем отработано"); return; }
+  }
+  S.marks = (S.marks || []).filter(x => !(x.emp === e.id && x.d === d)); S.hours = (S.hours || []).filter(x => !(x.emp === e.id && x.d === d));
+  if (ui.tabSt !== "work") S.marks.push({ emp: e.id, d, c: ui.tabSt });
+  else if (h !== null && (h !== planOf(e, d) || n > 0)) S.hours.push({ emp: e.id, d, h, n });
+  save(); updTabel(); render();
+  const ot = x => { const p = planOf(e, x), r = hoursRec(e, x); return p > 0 && r && tabState(e, x) === "work" ? Math.max(0, r.h - p) : 0; };
+  const prev = HR.addDays(d, -1), next = HR.addDays(d, 1);
+  toast(ot(d) + Math.max(ot(prev), ot(next)) > 4 ? "Записано. Сверхурочных больше 4 ч за два дня подряд — это выше предела (ст. 190 ТК)" : "Записано");
+}
+function tabReset() {
+  const e = curDraftEmp(), d = ui.tabDay; if (!e || !d) return;
+  S.marks = (S.marks || []).filter(x => !(x.emp === e.id && x.d === d)); S.hours = (S.hours || []).filter(x => !(x.emp === e.id && x.d === d));
+  ui.tabSt = null; save(); updTabel(); render();
 }
 function markDay(date) {
   const e = curDraftEmp(); if (!e) return;
+  if (hrsOn(e)) {
+    const st = tabState(e, date);
+    if (st === "out") { toast("Вне периода работы"); return; }
+    if (st === "vac" || st === "sick") { toast("Это отпуск или больничный — измените в карточке сотрудника"); return; }
+    ui.tabDay = date; ui.tabSt = null; updTabel(); return;
+  }
   const st = tabState(e, date);
   if (st === "out") { toast("Вне периода работы"); return; }
   if (st === "off") { toast("Выходной или праздничный день"); return; }
@@ -810,8 +930,10 @@ function viewTeam() {
 }
 function openEmp(id) {
   const e = id ? S.emps.find(x => x.id === id) : null;
-  D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, res: e.res || "1", ck: e.ck || "1", wd: String(e.wd || 5), touchedMode: true }
-        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", ck: "1", wd: String(S.company.wd || 5), touchedMode: false };
+  D = e ? { kind: "emp", id, type: e.type, mode: e.mode, dept: e.dept, res: e.res || "1", ck: e.ck || "1", wd: String(e.wd || 5), touchedMode: true,
+            hon: hrsOn(e) ? "1" : "0", basis: e.basis === "hour" ? "hour" : "month", hrs: hrsOn(e) ? e.hrs.slice() : defHrs(e.wd === 6 ? 6 : 5), hrsTouched: hrsOn(e) }
+        : { kind: "emp", id: null, type: "trud", mode: "gross", dept: "aup", res: "1", ck: "1", wd: String(S.company.wd || 5), touchedMode: false,
+            hon: "0", basis: "month", hrs: defHrs(S.company.wd === 6 ? 6 : 5), hrsTouched: false };
   const v = e || { last: "", first: "", mid: "", pinfl: "", pos: "", amount: 0, from: ui.ym, to: "" };
   openSheet('<h2>' + (e ? "Сотрудник" : "Новый сотрудник") + '</h2><p class="sub">' + (e ? "Изменения суммы действуют с текущего месяца, прошлые месяцы не пересчитываются." : "Заполните основное — остальное можно добавить позже.") + '</p>' +
     '<label class="f"><span>Фамилия *</span><input class="in" id="f-last" value="' + esc(v.last) + '" autocomplete="off"></label>' +
@@ -824,12 +946,13 @@ function openEmp(id) {
     '<div class="f"><span>Договор</span>' + seg("type", D.type, [["trud", "Трудовой"], ["gph", "ГПХ"]]) + '</div>' +
     '<div class="f"><span>График работы</span>' + seg("wd", D.wd, [["5", "5-дневка"], ["6", "6-дневка"]]) + '</div>' +
     '<div class="hint">Нужен для неполного месяца, отпуска и больничного: считаются только рабочие дни по графику (5 — пн–пт, 6 — пн–сб).</div>' +
+    '<div id="hrs-wrap"><div class="f"><span>Учёт времени</span>' + seg("hon", D.hon, [["0", "По дням"], ["1", "По часам"]]) + '</div><div id="hrs-box"></div></div>' +
     '<label class="f"><span>Льгота по доходу (ст. 380 НК)</span><select class="in" id="f-ben">' +
       [["", "Нет"], ["1.41", "1,41 МРОТ — ветераны, инвалиды войны, одинокие матери и др."], ["3", "3 МРОТ — инвалиды с детства, I–II группы"]]
         .map(o => '<option value="' + o[0] + '"' + ((v.ben || "") === o[0] ? " selected" : "") + '>' + o[1] + '</option>').join("") + '</select></label>' +
     '<div class="hint">Только трудовой договор по основному месту работы; нужны документы, подтверждающие льготу.</div>' +
-    '<div class="f"><span>Как вводите сумму</span>' + seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки (обратный расчёт)"]]) + '</div>' +
-    '<label class="f"><span id="amt-l">' + (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + ' *</span><input class="in amt" id="f-amt" inputmode="decimal" value="' + (v.amount ? fmt(v.amount) : "") + '" autocomplete="off"></label>' +
+    '<div class="f" id="mode-box"><span>Как вводите сумму</span>' + seg("mode", D.mode, [["gross", "Начислено"], ["net", "На руки (обратный расчёт)"]]) + '</div>' +
+    '<label class="f"><span id="amt-l">' + amtLabel() + '</span><input class="in amt" id="f-amt" inputmode="decimal" value="' + (v.amount ? fmt(v.amount) : "") + '" autocomplete="off"></label>' +
     '<div id="prev"></div>' +
     '<div class="two">' + dateField("f-hire", v.hire || (e ? v.from + "-01" : (ui.ym === curYm() ? todayIso() : ui.ym + "-01")), "Дата принятия *") +
     dateField("f-to", v.fire || (v.to ? v.to + "-" + pad(new Date(+v.to.slice(0, 4), +v.to.slice(5), 0).getDate()) : ""), "Дата увольнения") + '</div>' +
@@ -845,7 +968,32 @@ function openEmp(id) {
     '<label class="f"><span>Номер льготы (ID) из кабинета — если есть льгота ст. 380</span><input class="in" id="f-benid" value="' + esc(v.benId || "") + '" placeholder="по умолчанию ' + esc(S.rules.benId || "—") + '" autocomplete="off"></label></details>' +
     '<div class="stack"><button class="btn" data-act="saveEmp">Сохранить</button>' +
     (e ? '<button class="btn bad" data-act="delEmp">Удалить сотрудника</button>' : "") + '</div>');
-  updPreview();
+  updHrsBox(); updPreview();
+}
+const isHourlyDraft = () => D && D.kind === "emp" && D.hon === "1" && D.type !== "gph";
+const amtLabel = () => isHourlyDraft() && D.basis === "hour" ? "Ставка за час *" : (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + " *";
+const DOW = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+/* Часы по дням недели и способ оплаты — виден при «По часам» (только трудовой договор) */
+function updHrsBox() {
+  const box = $("#hrs-box"), wrap = $("#hrs-wrap"); if (!box || !D || D.kind !== "emp") return;
+  wrap.style.display = D.type === "gph" ? "none" : "";
+  const on = isHourlyDraft();
+  if (!on) D.basis = "month";
+  const total = D.hrs.reduce((s, x) => s + (+x || 0), 0);
+  box.innerHTML = on ? '<div class="hgrid">' + DOW.map((n, i) => '<label><span>' + n + '</span><input class="in hin" id="f-h' + i + '" inputmode="decimal" value="' + fmtH(D.hrs[i] || 0) + '"></label>').join("") + '</div>' +
+    '<div class="hint" id="hrs-sum"></div>' +
+    '<div class="f"><span>Оплата</span>' + seg("basis", D.basis, [["month", "Оклад в месяц"], ["hour", "За каждый час"]]) + '</div>' +
+    '<div class="hint">Накануне праздника рабочий день на 1 час короче (ст. 187 ТК) — учитывается автоматически. Сверхурочные, работа в выходные и ночью доплачиваются по табелю (ст. 262–264).</div>' : "";
+  const mb = $("#mode-box"); if (mb) mb.style.display = on && D.basis === "hour" ? "none" : "";
+  if (on && D.basis === "hour") D.mode = "gross";
+  const l = $("#amt-l"); if (l) l.textContent = amtLabel();
+  updHrsSum();
+}
+function updHrsSum() {
+  const el = $("#hrs-sum"); if (!el) return;
+  const total = D.hrs.reduce((s, x) => s + (+x || 0), 0);
+  el.textContent = "Неделя: " + fmtH(total) + " ч" + (total > 40 ? " — больше 40 ч — выше нормы (ст. 182 ТК)" : "");
+  el.className = "hint" + (total > 40 ? " warn" : "");
 }
 function saveEmp() {
   const g = id => $("#" + id).value.trim();
@@ -861,10 +1009,11 @@ function saveEmp() {
   if (fire && fire < hire) { toast("Дата увольнения раньше даты принятия"); return; }
   const rate = Number(g("f-rate").replace(",", ".")) || 1;
   const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to, fire, res: D.res, rate, wd: Number(D.wd) === 6 ? 6 : 5,
+    hrs: isHourlyDraft() ? D.hrs.map(x => +x || 0) : null, basis: isHourlyDraft() && D.basis === "hour" ? "hour" : "month",
     ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), card: g("f-card"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
-    if (e.amount !== amt || e.mode !== D.mode || e.type !== D.type || e.dept !== data.dept || (e.ben || "") !== data.ben) freezePast();
+    if (e.amount !== amt || e.mode !== D.mode || e.type !== D.type || e.dept !== data.dept || (e.ben || "") !== data.ben || (e.basis || "month") !== data.basis) freezePast();
     Object.assign(e, data);
   } else S.emps.push(Object.assign({ id: uid() }, data));
   save(); closeSheet(); render(); toast("Сохранено");
@@ -1231,8 +1380,10 @@ const ACT = {
     if (k === "type" && !D.touchedMode) D.mode = t.dataset.v === "gph" ? "net" : "gross";
     t.parentNode.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === t));
     document.querySelectorAll('#sheet [data-k="mode"]').forEach(b => b.classList.toggle("on", b.dataset.v === D.mode));
+    if (k === "wd" && !D.hrsTouched) D.hrs = defHrs(Number(D.wd) === 6 ? 6 : 5);
+    if (D.kind === "emp") updHrsBox();
     const l = $("#amt-l");
-    if (l) l.textContent = (D.mode === "net" ? "Сумма на руки в месяц" : "Начисление в месяц") + " *";
+    if (l) l.textContent = amtLabel();
     if (D.kind === "pay") { const f = document.querySelector("#sheet .f>span"); if (f) f.textContent = D.mode === "net" ? "Сумма на руки" : "Сумма начисления"; }
     updPreview(); updHr();
   },
@@ -1253,7 +1404,7 @@ const ACT = {
     m.e = m.e || {};
     const skip = !b.skip;
     if (!skip && !b.custom && b.base === e.amount && b.mode === e.mode && b.type === e.type && b.dept === e.dept && (b.ben || "") === (e.ben || "")) delete m.e[e.id];
-    else m.e[e.id] = { amount: b.base, mode: b.mode, type: b.type, dept: b.dept, ben: b.ben, skip: skip || undefined, fz: b.custom ? undefined : true };
+    else m.e[e.id] = { amount: b.base, mode: b.mode, type: b.type, dept: b.dept, ben: b.ben, basis: b.hourly ? "hour" : "month", skip: skip || undefined, fz: b.custom ? undefined : true };
     save(); closeSheet(); render();
   },
   vac: openVac, sick: openSick, saveVac: saveEvent, saveSick: saveEvent,
@@ -1272,7 +1423,8 @@ const ACT = {
   delPay: t => { const id = D && D.id; S.pays = S.pays.filter(p => p.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
   delDed: t => { const id = D && D.id; S.deds = S.deds.filter(d => d.id !== t.dataset.id); save(); render(); if (id) openPay(id); },
   comp: openComp, saveComp,
-  tabel: openTabel, mark: t => markDay(t.dataset.d), tabDone: () => { const id = D && D.id; closeSheet(); if (id) openPay(id); },
+  tabel: openTabel, mark: t => markDay(t.dataset.d), tabSave, tabReset,
+  tabSt: t => { ui.tabSt = t.dataset.v; updTabel(); }, tabDone: () => { const id = D && D.id; closeSheet(); if (id) openPay(id); },
   aid: openAid, others: openOthers, saveOther,
   delOther: t => {
     if (!confirmBox("Удалить эту запись о доходе?")) return;
@@ -1300,7 +1452,7 @@ const ACT = {
     S.events = (S.events || []).filter(ev => ev.emp !== e.id);
     S.aids = (S.aids || []).filter(a => a.emp !== e.id);
     S.pays = (S.pays || []).filter(p => p.emp !== e.id); S.deds = (S.deds || []).filter(d => d.emp !== e.id);
-    S.marks = (S.marks || []).filter(k => k.emp !== e.id);
+    S.marks = (S.marks || []).filter(k => k.emp !== e.id); S.hours = (S.hours || []).filter(k => k.emp !== e.id);
     Object.values(S.months).forEach(m => { if (m.e) delete m.e[e.id]; });
     save(); closeSheet(); render(); toast("Удалено");
   },
@@ -1353,6 +1505,11 @@ function applyItDate(el) {
 document.addEventListener("input", ev => {
   const el = ev.target;
   if (el.classList.contains("dmy")) { el.value = fmtDmy(el.value); if (el.id === "c-itfrom" || el.id === "c-itto") applyItDate(el); }
+  if (/^f-h[0-6]$/.test(el.id) && D && D.hrs) {
+    el.value = el.value.replace(/[^\d.,]/g, "");
+    D.hrs[+el.id.slice(3)] = Math.min(24, Number(el.value.replace(",", ".")) || 0); D.hrsTouched = true;
+    updHrsSum(); updPreview();
+  }
   if (el.id === "v-days") el.value = el.value.replace(/\D/g, "");
   if (el.id === "v-avg" || el.id === "s-avg") { maskMoney(el); D.avgTouched = true; }
   if (["v-start", "v-days", "v-avg", "s-from", "s-to", "s-avg"].includes(el.id)) updHr();
