@@ -37,8 +37,7 @@ public class MainActivity extends Activity {
         web = new WebView(this);
         web.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         web.setHorizontalScrollBarEnabled(false);
-        web.setVerticalScrollBarEnabled(false);
-        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        web.setVerticalScrollBarEnabled(true);
         setContentView(web);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);

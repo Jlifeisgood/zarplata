@@ -23,8 +23,8 @@
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-html,body{max-width:100%;overflow-x:hidden;overscroll-behavior:none;touch-action:pan-y;scrollbar-width:none}
-html::-webkit-scrollbar,body::-webkit-scrollbar{display:none}
+html{overscroll-behavior-x:none}
+body{max-width:100%;overflow-x:clip}
 body{padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 24px);min-height:100vh}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 input,select,textarea{font:inherit;color:inherit}

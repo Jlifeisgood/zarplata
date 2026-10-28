@@ -1213,7 +1213,8 @@ function viewSet() {
       '<div class="hint">Льгота считается по месяцам: если дата — 1-е число, то с этого месяца, иначе со следующего (льготы действуют с 1-го числа месяца, следующего за включением в реестр). Пусто — льгота для всех месяцев.</div>' : "");
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
-  h += '<div class="sec">Напоминания</div>' + sw("rem", "rem", remOn(), "О сроках отчёта", "12 и 15 числа в 09:00: НДФЛ и соцналог — до 15 числа, годовой отчёт — до 15 февраля");
+  h += '<div class="sec">Напоминания</div>' + (A && A.setReminders ? sw("rem", "rem", remOn(), "О сроках отчёта", "12 и 15 числа в 09:00: НДФЛ и соцналог — до 15 числа, годовой отчёт — до 15 февраля")
+    : '<div class="hint">Напоминания о сроках работают в приложении для Android. Срок отчёта — до 15 числа (годовой — до 15 февраля), он показан на главном экране.</div>');
   h += '<div class="sec">Язык / Til</div>' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang");
   h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
@@ -1260,16 +1261,29 @@ function sendFile(name, mime, b64, noShare) {
     if (!r.startsWith("ok:")) { toast("Не удалось сохранить файл"); return; }
     toast("Сохранено в «Загрузки»: " + name);
     if (!noShare && A.shareFile) A.shareFile(r.slice(3), mime, name);
-  } else { // проверка в браузере
+  } else { // iPhone / браузер: окно «Поделиться» (там есть «Сохранить в Файлы»), иначе обычная загрузка
+    const bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const blob = new Blob([u8], { type: mime });
+    let file = null;
+    try { file = new File([blob], name, { type: mime }); } catch (e) { }
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: name }).catch(err => { if (!err || err.name !== "AbortError") toast("Не удалось сохранить файл"); });
+      return;
+    }
     const a = document.createElement("a");
-    a.href = "data:" + mime + ";base64," + b64; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
   }
 }
 function shareText(title, text) {
   title = I18N.tr(title); text = I18N.tr(text);
   if (A && A.shareText) A.shareText(title, text);
+  else if (navigator.share) navigator.share({ title, text }).catch(() => { });
   else if (navigator.clipboard) { navigator.clipboard.writeText(text); toast("Скопировано"); }
 }
+/* Установка на iPhone/iPad как приложение (PWA): офлайн-кэш работает только по https, внутри Android-приложения не нужен */
+if ("serviceWorker" in navigator && /^https?:$/.test(location.protocol) && !A && location.hostname !== "localhost") navigator.serviceWorker.register("sw.js").catch(() => { });
 /* Резервная копия: все компании в одном файле (v2). Файл старой версии (одна компания, v1) восстанавливается как новая компания. */
 function backup() {
   save();
