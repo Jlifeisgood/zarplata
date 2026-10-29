@@ -147,6 +147,21 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         loadApp()
     }
+
+    // MARK: - самопроверка на симуляторе в GitHub Actions: запуск с аргументом -smoke-demo (демо-данные) или -smoke-backup (резервная копия)
+
+    private var smokeDone = false
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let args = ProcessInfo.processInfo.arguments
+        guard !smokeDone else { return }
+        let js: String
+        if args.contains("-smoke-demo") { js = "window.__dbg.ACT.demo()" }
+        else if args.contains("-smoke-backup") { js = "window.__dbg.ACT.backup()" }
+        else { return }
+        smokeDone = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { webView.evaluateJavaScript(js, completionHandler: nil) }
+    }
 }
 
 enum Files {
