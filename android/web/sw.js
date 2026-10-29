@@ -1,6 +1,6 @@
 /* Офлайн-кэш для установки на iPhone/iPad. Данные пользователя здесь не хранятся — они в localStorage страницы.
    При выпуске новой версии поменяйте VERSION, чтобы устройства обновили кэш. */
-var VERSION = "zarplata-3";
+var VERSION = "zarplata-4";
 var FILES = ["./", "index.html", "app.css", "calc.js", "hr.js", "tpl11101.js", "xlsxfill.js", "xlsxreport.js", "i18n.js", "app.js", "manifest.webmanifest", "icon-180.png", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", function (e) {
