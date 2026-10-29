@@ -273,6 +273,9 @@ function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("on");
   clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("on"), 2600);
 }
+/* Сообщения от приложения для iPhone (папка ios/): ошибка сохранения файла, запрет уведомлений */
+window.nativeToast = msg => toast(msg);
+window.nativeRemOff = () => { ui.rem = false; render(); };
 function openSheet(html) {
   const s = $("#sheet");
   s.innerHTML = '<div class="grab"></div>' + html;
@@ -1259,7 +1262,7 @@ function sendFile(name, mime, b64, noShare) {
   if (A && A.saveFile) {
     const r = String(A.saveFile(name, mime, b64));
     if (!r.startsWith("ok:")) { toast("Не удалось сохранить файл"); return; }
-    toast("Сохранено в «Загрузки»: " + name);
+    toast((A.platform === "ios" ? "Сохранено в «Файлы» → «Зарплата»: " : "Сохранено в «Загрузки»: ") + name);
     if (!noShare && A.shareFile) A.shareFile(r.slice(3), mime, name);
   } else { // iPhone / браузер: окно «Поделиться» (там есть «Сохранить в Файлы»), иначе обычная загрузка
     const bin = atob(b64), u8 = new Uint8Array(bin.length);

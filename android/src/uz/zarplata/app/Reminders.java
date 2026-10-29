@@ -72,11 +72,11 @@ public class Reminders extends BroadcastReceiver {
         if (uz) {
             title = day >= 15 ? "Bugun hisobot topshirish muddati" : "Hisobot topshirishga 3 kun qoldi";
             text = "JShDS va ijtimoiy soliq, " + period + ": hisobotni topshiring va 15-sanagacha to'lang.";
-            if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Yillik hisobot (" + prev.get(Calendar.YEAR) + ") ni unutmang.";
+            if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Yillik hisobot (" + (now.get(Calendar.YEAR) - 1) + ") ni unutmang.";
         } else {
             title = day >= 15 ? "Сегодня срок сдачи отчёта" : "Через 3 дня срок сдачи отчёта";
             text = "НДФЛ и соцналог за " + period + ": сдать отчёт и заплатить до 15 числа.";
-            if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Не забудьте годовой отчёт за " + prev.get(Calendar.YEAR) + " год.";
+            if (now.get(Calendar.MONTH) == Calendar.FEBRUARY) text += " Не забудьте годовой отчёт за " + (now.get(Calendar.YEAR) - 1) + " год.";
         }
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(new NotificationChannel(CHANNEL, uz ? "Hisobot muddatlari" : "Сроки отчётности", NotificationManager.IMPORTANCE_DEFAULT));

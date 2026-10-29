@@ -1,0 +1,35 @@
+# Проект Xcode генерируется из этого файла (XcodeGen) на сборочной машине GitHub Actions, см. .github/workflows/ios.yml.
+# Веб-интерфейс берётся из android/web — тот же, что в Android-версии; в репозитории копии нет (ios/Zarplata/web создаёт сборка).
+name: Zarplata
+options:
+  bundleIdPrefix: uz.zarplata
+  deploymentTarget:
+    iOS: "15.0"
+  developmentLanguage: ru
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Zarplata:
+    type: application
+    platform: iOS
+    sources:
+      - path: Zarplata
+        excludes:
+          - "web"
+          - "web/**"
+      - path: Zarplata/web
+        type: folder
+    settings:
+      base:
+        PRODUCT_NAME: Zarplata
+        PRODUCT_BUNDLE_IDENTIFIER: uz.zarplata.app
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: NO
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGN_IDENTITY: ""

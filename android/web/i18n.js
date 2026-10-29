@@ -43,7 +43,8 @@
     ["Больничный (за счёт работодателя)", "Kasallik nafaqasi (ish beruvchi hisobidan)"], ["Не облагается (ст. 380 НК)", "Soliqqa tortilmaydi (SK 380-modda)"],
     ["Соцналог (ЕСП) ", "Ijtimoiy soliq "], [", за счёт работодателя", ", ish beruvchi hisobidan"], [" (из НДФЛ)", " (JShDSdan)"],
     ["Расчётный листок", "Hisob varaqasi"], ["Не начислять в этом месяце", "Bu oyda hisoblamaslik"], ["Начислять в этом месяце", "Bu oyda hisoblash"],
-    ["Сохранено в «Загрузки»: ", "«Yuklamalar»ga saqlandi: "], ["Сохранено", "Saqlandi"], ["Введите сумму", "Summani kiriting"],
+    ["Сохранено в «Загрузки»: ", "«Yuklamalar»ga saqlandi: "], ["Сохранено в «Файлы» → «Зарплата»: ", "«Fayllar» → «Zarplata» papkasiga saqlandi: "],
+    ["Уведомления запрещены. Разрешите их: Настройки iPhone → Уведомления → Зарплата", "Bildirishnomalar taqiqlangan. Ruxsat bering: iPhone sozlamalari → Bildirishnomalar → Zarplata"], ["Сохранено", "Saqlandi"], ["Введите сумму", "Summani kiriting"],
     ["Начисление меньше МРОТ (", "Hisoblangan summa MHEKMdan kam ("], ["Неполный месяц: оклад пересчитан на ", "To'liq bo'lmagan oy: oklad qayta hisoblandi — "],
     [" рабочих дней (по графику ", " ish kuni ("], ["-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.", " kunlik hafta, bayramlar hisobga olinmaydi). Boshqacha bo'lsa, summani qo'lda kiriting."],
     [" из ", " / "], [" · ", " · "],
@@ -227,7 +228,8 @@
   const CYR = "А-Яа-яЁё";
   const rx = LIST.map(([a, b]) => {
     const esc = a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return [a.length <= 4 ? new RegExp("(?<![" + CYR + "])" + esc + "(?![" + CYR + "])", "g") : null, a, b];
+    // без lookbehind (?<!…): его нет в Safari до 16.4 — предшествующий символ захватываем группой и возвращаем при замене
+    return [a.length <= 4 ? new RegExp("(^|[^" + CYR + "])" + esc + "(?![" + CYR + "])", "g") : null, a, b];
   });
   let lang = "ru";
   const tr = s => {
@@ -235,7 +237,7 @@
     let out = s;
     for (const [re, a, b] of rx) {
       if (!out.includes(a)) continue;
-      out = re ? out.replace(re, b) : out.split(a).join(b);
+      out = re ? out.replace(re, (m, p) => p + b) : out.split(a).join(b);
       if (!/[А-Яа-яЁё]/.test(out)) break;
     }
     return out;

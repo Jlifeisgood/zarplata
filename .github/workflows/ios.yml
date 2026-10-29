@@ -1,0 +1,70 @@
+# Сборка приложения для iPhone/iPad без подписи (подписывает Sideloadly при установке, см. ios/README.md).
+# Результат — релиз «iPhone: сборка N» с файлом Zarplata.ipa: https://github.com/<владелец>/<репозиторий>/releases/latest
+name: iOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "android/web/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copy the web app into the iOS project
+        run: |
+          mkdir -p ios/Zarplata/web
+          rsync -a --exclude 'dev-*' --exclude 'sw.js' android/web/ ios/Zarplata/web/
+          ls ios/Zarplata/web
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          cd ios
+          xcodebuild -version
+          set +e
+          xcodebuild -project Zarplata.xcodeproj -target Zarplata -configuration Release -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} SYMROOT="$PWD/build" build > build.log 2>&1
+          status=$?
+          set -e
+          # ошибки и «nearly matches» (метод делегата не подхватился бы) выводим аннотациями — их видно на странице сборки
+          grep -E "error:|nearly matches" build.log | sort -u | head -40 | while IFS= read -r l; do echo "::error::${l//%/%25}"; done
+          tail -n 60 build.log
+          if [ $status -ne 0 ] || grep -q "nearly matches" build.log; then exit 1; fi
+
+      - name: Package the IPA
+        run: |
+          cd ios
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/Zarplata.app Payload/
+          zip -qry Zarplata.ipa Payload
+          ls -la Zarplata.ipa
+
+      - name: Publish a release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-${{ github.run_number }}
+          name: "iPhone: сборка ${{ github.run_number }}"
+          make_latest: true
+          files: ios/Zarplata.ipa
+          body: |
+            Приложение «Зарплата» для iPhone и iPad (iOS 15 и новее), без подписи.
+            Устанавливается с компьютера через Sideloadly с вашим Apple ID — инструкция в ios/README.md.
