@@ -116,6 +116,12 @@
     ["Доплаты за часы", "Soatlar uchun qo'shimcha to'lovlar"], [" · доплаты", " · qo'shimcha to'lovlar"], ["Оплачено часов по окладу", "Oklad bo'yicha to'langan soatlar"],
     ["Оплачено по ставке ", "Stavka bo'yicha to'langan "], ["Сверхурочные: ", "Ish vaqtidan tashqari: "], ["Работа в выходной/праздник: ", "Dam olish/bayram kunidagi ish: "], ["Ночные: ", "Tungi: "],
     ["Часы берутся из табеля. Сумму выше можно задать вручную — доплаты за сверхурочные и выходные всё равно добавятся.", "Soatlar tabeldan olinadi. Yuqoridagi summani qo'lda kiritish mumkin — ortiqcha va dam olish kunlari uchun qo'shimcha to'lovlar baribir qo'shiladi."],
+    // листок-файл
+    ["Листок-файл", "Varaqa-fayl"], ["Листки сотрудникам", "Xodimlarga varaqalar"], ["Листки сотрудникам", "Xodimlarga varaqalar"],
+    ["Каждому — свой файл с листками, табелем и остатком отпуска. Он открывается в телефоне без установки и без интернета. Отправьте файл сотруднику сами: Telegram, WhatsApp или почта.", "Har biriga — o'z fayli: varaqalar, tabel va ta'til qoldig'i. U telefonda o'rnatishsiz va internetsiz ochiladi. Faylni xodimga o'zingiz yuboring: Telegram, WhatsApp yoki pochta."],
+    ["нажмите, чтобы отправить", "yuborish uchun bosing"], ["В этом месяце нет сотрудников с трудовым договором.", "Bu oyda mehnat shartnomasi bo'yicha xodimlar yo'q."],
+    ["Файл содержит данные только этого сотрудника. Ничего не хранится на серверах: файл получает тот, кому вы его отправили.", "Fayl faqat shu xodimning ma'lumotlarini o'z ichiga oladi. Serverlarda hech narsa saqlanmaydi: faylni siz yuborgan kishi oladi."],
+    ["У сотрудника нет начислений", "Xodimda hisoblashlar yo'q"],
     // автообновление
     ["Данные хранятся только на этом телефоне и никуда не отправляются, через интернет приложение только получает обновления.", "Ma'lumotlar faqat shu telefonda saqlanadi va hech qayerga yuborilmaydi, internet orqali ilova faqat yangilanishlarni oladi."],
     ["Приложение обновлено", "Ilova yangilandi"], ["Вышла новая версия приложения ", "Ilovaning yangi versiyasi chiqdi: "], [". Нажмите, чтобы установить.", ". O'rnatish uchun bosing."], [" · обновление ", " · yangilanish "],

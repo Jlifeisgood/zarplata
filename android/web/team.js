@@ -793,6 +793,6 @@ const Team = (() => {
   }
   function forgetOnWipe() { Cloud.signOut(); setMe(null); emp = {}; wr(EMP, null); }
 
-  return { employeeMode, employeeView, settingsBlock, welcomeBtn, payBanner, actions, onSave, onSwitch, onEmpDeleted, forgetOnWipe, start, linked,
+  return { buildSlip, employeeMode, employeeView, settingsBlock, welcomeBtn, payBanner, actions, onSave, onSwitch, onEmpDeleted, forgetOnWipe, start, linked,
     syncNow, flush };   // syncNow и flush нужны автотесту
 })();

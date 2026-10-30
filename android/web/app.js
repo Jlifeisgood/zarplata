@@ -422,7 +422,8 @@ function viewPay() {
       h += '<div class="sec" style="margin-top:14px"><span>' + deptName(d) + " · " + g.length + '</span><span class="tag num">' + fmt(gt.net) + ' на руки</span></div><div class="card">' + g.map(payItem).join("") + "</div>";
     });
   } else h += '<div class="card">' + list.map(payItem).join("") + "</div>";
-  h += '<div class="btns"><button class="btn sec2" data-act="registry">' + ICON.file + 'Реестр выплат (Excel)</button></div>';
+  h += '<div class="btns"><button class="btn sec2" data-act="registry">' + ICON.file + 'Реестр выплат (Excel)</button></div>' +
+    '<div class="btns"><button class="btn sec2" data-act="slipAll">' + ICON.share + 'Листки сотрудникам</button></div>';
   return h + "</div>";
 }
 
@@ -463,7 +464,7 @@ function openPay(id) {
     hoursNote(e, en) +
     (en.day && !en.day.hours ? '<div class="hint">Неполный месяц: оклад пересчитан на ' + Math.max(0, en.day.worked - en.day.abs) + ' из ' + en.day.W + ' рабочих дней (по графику ' + empWd(e) + '-дневной недели, праздники не считаются). Введите сумму вручную, если нужно иначе.</div>' : "") +
     '<div class="btns"><button class="btn" data-act="savePay">Сохранить</button></div>' +
-    '<div class="btns"><button class="btn sec2" data-act="slip">' + ICON.share + 'Расчётный листок</button></div>' +
+    '<div class="btns"><button class="btn sec2" data-act="slip">' + ICON.share + 'Расчётный листок</button><button class="btn sec2" data-act="slipFile">' + ICON.file + 'Листок-файл</button></div>' +
     evBlock(e) + payBlock(e) +
     '<div class="btns">' + '<button class="btn ghost" data-act="skipPay">' + (en.skip ? "Начислять в этом месяце" : "Не начислять в этом месяце") + '</button>' +
     (en.custom ? '<button class="btn ghost" data-act="resetPay">Вернуть стандартную</button>' : "") + '</div>');
@@ -677,6 +678,21 @@ function openDedAdd() {
     '<label class="f"><span>Комментарий</span><input class="in" id="d-note" autocomplete="off"></label>' +
     '<div class="hint">Удерживается из суммы «на руки»; НДФЛ, ИНПС и соцналог не меняются.</div>' +
     '<div class="stack"><button class="btn" data-act="saveDedAdd">Записать</button></div>');
+}
+/* Листок-файл: сотрудник открывает его в браузере телефона, ничего не устанавливая; данные идут только от директора сотруднику */
+function sendSlipFile(e) {
+  const d = new Date(), made = pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear();
+  const slip = Team.buildSlip(e);
+  if (!slip.months.length) { toast("У сотрудника нет начислений"); return; }
+  const name = (coPrefix() ? coPrefix() + "_" : "") + "Листок_" + e.last.replace(/[^\p{L}\p{N}]+/gu, "_") + "_" + ymLabel(slip.months[0].ym).replace(/\s+/g, "_") + ".html";
+  sendFile(name, "text/html", toB64(SlipFile.html(slip, made)));
+}
+function openSlipAll() {
+  D = { kind: "slipall" };
+  const list = S.emps.filter(e => e.type !== "gph" && empActive(e, ui.ym)).sort((a, b) => a.last.localeCompare(b.last, "ru"));
+  openSheet('<h2>Листки сотрудникам</h2><p class="sub">Каждому — свой файл с листками, табелем и остатком отпуска. Он открывается в телефоне без установки и без интернета. Отправьте файл сотруднику сами: Telegram, WhatsApp или почта.</p>' +
+    (list.length ? '<div class="card">' + list.map(e => '<button class="item" data-act="slipFile" data-id="' + e.id + '"><div class="av">' + esc(initials(e)) + '</div><div class="grow"><div class="nm">' + esc(shortName(e)) + '</div><div class="sb">нажмите, чтобы отправить</div></div>' + ICON.share.replace("<svg", '<svg width="20" height="20"') + '</button>').join("") + '</div>' : '<div class="hint">В этом месяце нет сотрудников с трудовым договором.</div>') +
+    '<div class="hint">Файл содержит данные только этого сотрудника. Ничего не хранится на серверах: файл получает тот, кому вы его отправили.</div>');
 }
 /* Реестр выплат на месяц: кому сколько осталось перечислить (для банка / кассы) */
 function registryRows() {
@@ -1482,6 +1498,8 @@ const ACT = {
   },
   resetPay: () => { const m = S.months[ui.ym]; if (m && m.e) delete m.e[D.id]; save(); closeSheet(); render(); toast("Возвращена стандартная сумма"); },
   slip: () => { const e = curDraftEmp(); if (e) shareText("Расчётный листок", payslip(e)); },
+  slipFile: t => { const e = S.emps.find(x => x.id === (t.dataset.id || (D && D.id))); if (e) sendSlipFile(e); },
+  slipAll: openSlipAll,
   delEmp: () => {
     const e = S.emps.find(x => x.id === D.id);
     if (!confirmBox("Удалить «" + fullName(e) + "» вместе с историей начислений? Для увольнения лучше указать дату увольнения в карточке.")) return;
