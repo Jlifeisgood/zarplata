@@ -33,7 +33,9 @@ enum Bridge {
             setReminders: function (on) { window.Android._rem = !!on; post({ cmd: "setReminders", on: !!on }); },
             remindersOn: function () { return !!window.Android._rem; },
             setLang: function (l) { post({ cmd: "setLang", lang: String(l) }); },
-            appVersion: function () { return \(jsString(version)); }
+            appVersion: function () { return \(jsString(version)); },
+            webVersion: function () { return \(Updater.loaded); },
+            updateOk: function () { post({ cmd: "updateOk" }); }
           };
         })();
         """

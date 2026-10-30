@@ -19,9 +19,12 @@ import android.webkit.JsResult;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+
+import org.json.JSONObject;
 
 import java.io.OutputStream;
 import java.util.regex.Matcher;
@@ -31,6 +34,7 @@ public class MainActivity extends Activity {
     private static final int REQ_FILE = 11;
     private WebView web;
     private ValueCallback<Uri[]> chooser;
+    private long pausedAt = 0;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -54,6 +58,14 @@ public class MainActivity extends Activity {
                 try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) { }
                 return true;
             }
+            @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
+                return Updater.intercept(r.getUrl());
+            }
+            @Override public void onPageFinished(WebView v, String url) {
+                // страница не сообщила о запуске — новая версия не работает, возвращаемся к прошлой
+                web.postDelayed(() -> { if (Updater.rollbackIfBad(MainActivity.this)) loadPage(); }, 2000);
+                checkUpdates();
+            }
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb, FileChooserParams p) {
@@ -75,7 +87,33 @@ public class MainActivity extends Activity {
                 return true;
             }
         });
+        loadPage();
+    }
+
+    private void loadPage() {
+        Updater.beginLoad(this);
         web.loadUrl("file:///android_asset/index.html");
+    }
+
+    private void checkUpdates() {
+        Updater.check(this, () -> runOnUiThread(() -> web.evaluateJavascript("window.onAppUpdate && window.onAppUpdate()", null)));
+    }
+
+    private void toast(String text) {
+        web.post(() -> web.evaluateJavascript("window.nativeToast && window.nativeToast(" + JSONObject.quote(text) + ")", null));
+    }
+
+    @Override protected void onPause() {
+        super.onPause();
+        pausedAt = System.currentTimeMillis();
+    }
+
+    /** Вернулись в приложение спустя время: если обновление уже скачано и человек ничего не вводит — показываем новую версию */
+    @Override protected void onResume() {
+        super.onResume();
+        checkUpdates();
+        if (pausedAt == 0 || System.currentTimeMillis() - pausedAt < 30000 || chooser != null || !Updater.newerReady(this)) return;
+        web.evaluateJavascript("(window.appBusy ? window.appBusy() : false)", v -> { if (!"true".equals(v)) loadPage(); });
     }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
@@ -92,6 +130,17 @@ public class MainActivity extends Activity {
     }
 
     private class Bridge {
+        /** Страница запустилась: для автообновления это знак, что версия рабочая */
+        @JavascriptInterface public void updateOk() { Updater.markGood(MainActivity.this); }
+
+        /** Номер показанной версии интерфейса */
+        @JavascriptInterface public int webVersion() { return Updater.loaded(MainActivity.this); }
+
+        /** Номер новой версии APK, если она вышла, иначе пустая строка */
+        @JavascriptInterface public String apkUpdate() { return Updater.apkUpdateName(MainActivity.this); }
+
+        @JavascriptInterface public void installApk() { Updater.installApk(MainActivity.this, MainActivity.this::toast); }
+
         /** Напоминания о сроках отчёта: включить/выключить (на Android 13+ сначала просим разрешение на уведомления). */
         @JavascriptInterface public void setReminders(final boolean on) {
             runOnUiThread(() -> {

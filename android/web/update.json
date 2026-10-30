@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "minApi": 1,
+  "apk": { "code": 6, "name": "1.3", "file": "Zarplata.apk", "sha256": "6cce39ea65bc3b9aae43496a0aa2aeabc7e53383dfb1d6e70b3bc1fa2db3fd74" },
+  "files": {
+    "app.css": "117c8a8723071eb96f395d5a894a98fe78233eb379edbdd41b69f2bf8ac59c9b",
+    "app.js": "f1d86617fbe95bad1d4d5d2df09cc71cc481e3e6157560284fca536d551332b0",
+    "calc.js": "3850963e8db8b9bf81c197deefc9ba2e944c436aec5438516624166ca86d3855",
+    "cloud.js": "2279abf259feecdc1d494079faa0d6f699df48686bf7a796756559cdb4e7065c",
+    "firebase-config.js": "970485dd23001cc2da53e634f1f47b735896f379ea31e9b0cb0d90d11761e110",
+    "hr.js": "57991cb046ed6c7eee15f07f9b0df0ffff036581a7babe2f65e8f12e49a0540b",
+    "i18n.js": "8d9bfb4d98c59f319f7fbb3faf60730caea442908dee507c05fd79742e93d018",
+    "icon-180.png": "17eee6e449e3886b2c911d386c0b732d413d6f10cf0707718909554642712583",
+    "icon-192.png": "c3891bf918e04a1eb91bf25797088d40f4615d5d1573b659dbb6829b61c2e693",
+    "icon-512.png": "94f69799fd17309d1283a22a1c468cd928e83fa19fc8d70c742200d226cadbf4",
+    "index.html": "59cb3f5c626cf2eb54955d362c7e3caaf412a92a94595bcc46980ed3d21cb7ef",
+    "manifest.webmanifest": "aee9201cb7bdf8362f3e40b368bce8009bf3b99fa3a802649cefded550f52e48",
+    "team.js": "de2d165235045a683500216ac0f2a69dbf3d8defc70b7f65bd7a87814764a441",
+    "tpl11101.js": "4524fcda373417c2f22fd04b6a7386891a3c0b825f23ec237004b9c210c264bc",
+    "xlsxfill.js": "2381c8f593e8daee6755c01babf6bf42eaf2b15e2d52e765f276a41c099a389b",
+    "xlsxreport.js": "8d5b44501df557bd9e7c329b7b0dfdd86039cee61c0999b565baa8ba0981e631"
+  }
+}

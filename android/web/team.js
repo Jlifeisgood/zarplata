@@ -692,7 +692,7 @@ const Team = (() => {
     return h;
   }
   function viewMore() {
-    let h = "";
+    let h = apkBanner();
     if (me.list && me.list.length > 1) h += '<div class="sec" style="margin-top:0">Компания</div><div class="card">' + me.list.map(m => '<button class="item" data-act="empCo" data-id="' + esc(m.company) + '"><div class="grow"><div class="nm">' + esc(m.companyName || "Без названия") + '</div></div>' + (m.company === me.cid ? '<span class="badge ok">✓</span>' : "") + '</button>').join("") + '</div>';
     h += '<div class="sec"' + (me.list && me.list.length > 1 ? "" : ' style="margin-top:0"') + '>Язык / Til</div>' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang");
     h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");

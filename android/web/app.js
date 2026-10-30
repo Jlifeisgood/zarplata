@@ -385,12 +385,17 @@ function payItem(x) {
     '<div class="grow"><div class="nm">' + esc(shortName(e)) + t + (en.custom && !en.skip ? '<span class="badge">изменено</span>' : en.day && !en.skip && !en.hourly ? '<span class="badge warn">неполный</span>' : "") + '</div><div class="sb">' + sub + '</div></div>' +
     '<div class="r"><b class="num">' + (en.skip ? "—" : fmt(r.net)) + '</b><span>на руки</span></div></button>';
 }
+/* Вышла новая версия APK: интерфейс обновляется сам, а Java-часть ставится по нажатию через системное окно */
+const apkBanner = () => {
+  const v = A && A.apkUpdate ? A.apkUpdate() : "";
+  return v ? '<button class="alert ok" style="width:100%;border:0;text-align:left;font:inherit" data-act="apkInstall">Вышла новая версия приложения ' + esc(v) + '. Нажмите, чтобы установить.</button>' : "";
+};
 function viewPay() {
   const ym = ui.ym, rows = monthRows(ym), live = rows.filter(x => !x.en.skip);
   let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + coChip() + '</div></div><div class="page">';
   h += '<div class="month"><button class="ib" data-act="ym" data-d="-1" aria-label="Предыдущий месяц">' + ICON.left + '</button><div class="m">' + ymLabel(ym) +
     (ym === curYm() ? "<small>текущий месяц</small>" : "") + '</div><button class="ib" data-act="ym" data-d="1" aria-label="Следующий месяц">' + ICON.right + '</button></div>';
-  h += Team.payBanner() + yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
+  h += apkBanner() + Team.payBanner() + yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
   if (!S.emps.length) {
     return h + empty(ICON.team, "Пока никого нет", "Добавьте сотрудника — укажите ФИО и начисление, остальное посчитается само.",
       '<button class="btn" data-act="newEmp">' + ICON.plus + 'Добавить сотрудника</button>') + "</div>";
@@ -1235,7 +1240,8 @@ function viewSet() {
     '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
     '<button class="btn bad" data-act="delCo">Удалить эту компанию</button>' +
     '<button class="btn bad" data-act="wipe">' + (REG.list.length > 1 ? "Стереть все компании и данные" : "Стереть все данные") + '</button></div><input type="file" id="restore-file" accept=".json,application/json" hidden>';
-  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом телефоне и на сервере (Google Firebase)." : "Данные хранятся только на этом телефоне." + (Cloud.configured() ? " В интернет приложение выходит, только если вы войдёте в аккаунт." : " Приложение не выходит в интернет.")) + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
+  h += '<div class="sec"></div>' + apkBanner();
+  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + (A && A.webVersion ? " · обновление " + A.webVersion() : "") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом телефоне и на сервере (Google Firebase)." : "Данные хранятся только на этом телефоне." + (Cloud.configured() ? " В интернет приложение выходит, только если вы войдёте в аккаунт." : " Приложение не выходит в интернет.")) + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
   return h;
 }
 function openRates() {
@@ -1428,6 +1434,7 @@ const ACT = {
     S.company.split = !!(D && D.split); S.setup = true; D = null; save(); ui.tab = "pay"; render();
   },
   demo: () => demo(),
+  apkInstall: () => { if (A && A.installApk) A.installApk(); },
   savePay, saveEmp,
   skipPay: () => {
     const e = curDraftEmp(), m = S.months[ui.ym] || (S.months[ui.ym] = {}), b = entryFor(e, ui.ym);
@@ -1575,3 +1582,14 @@ I18N.setLang(REG.lang || "ru");
 if (A && A.setLang) A.setLang(REG.lang || "ru");
 Team.start();
 window.__dbg = { S: () => S, REG: () => REG, ui, ACT, Team };
+/* Автообновление (Updater в android/ и ios/): обновить страницу можно, пока человек ничего не вводит; updateOk — последним: страница запустилась, версия рабочая */
+window.appBusy = () => sheetOpen() || ["INPUT", "SELECT", "TEXTAREA"].includes((document.activeElement || {}).nodeName);
+window.onAppUpdate = () => { if (!window.appBusy()) render(); };
+if (A && A.webVersion) {
+  try {
+    const was = localStorage.getItem("zarplata.ver"), now = String(A.webVersion());
+    if (was && was !== now) toast("Приложение обновлено");
+    localStorage.setItem("zarplata.ver", now);
+  } catch (e) { }
+}
+if (A && A.updateOk) A.updateOk();

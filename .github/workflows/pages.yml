@@ -23,6 +23,8 @@ jobs:
         run: |
           mkdir -p /tmp/site
           rsync -a --exclude 'dev-*' android/web/ /tmp/site/
+          # подпись обновления должна сходиться с публикуемыми файлами: иначе приложения не примут обновление
+          jq -r '.files | to_entries[] | "\(.value)  \(.key)"' android/web/update.json | (cd android/web && sha256sum -c --quiet -) || echo "::warning::update.json устарел: перед публикацией запустите tools/release.ps1"
           touch /tmp/site/.nojekyll
           # новая версия кэша: телефоны обновят приложение при следующем открытии
           sed -i "s/var VERSION = \"[^\"]*\"/var VERSION = \"zarplata-${{ github.run_number }}\"/" /tmp/site/sw.js

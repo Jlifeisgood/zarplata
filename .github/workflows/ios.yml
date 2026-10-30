@@ -27,7 +27,7 @@ jobs:
       - name: Copy the web app into the iOS project
         run: |
           mkdir -p ios/Zarplata/web
-          rsync -a --exclude 'dev-*' --exclude 'sw.js' android/web/ ios/Zarplata/web/
+          rsync -a --exclude 'dev-*' --exclude 'sw.js' --exclude '*.apk' --exclude 'update.sig' android/web/ ios/Zarplata/web/
           ls ios/Zarplata/web
 
       - name: Generate the Xcode project
@@ -58,12 +58,14 @@ jobs:
           zip -qry Zarplata.ipa Payload
           ls -la Zarplata.ipa
 
-      # Самопроверка на симуляторе: запуск с демо-данными, затем очистка данных WebKit (данные должны восстановиться
-      # из копии приложения) и резервная копия (файл в Documents + окно «Поделиться»). Итоги — аннотациями, снимки — в ветку ci-shots.
+      # Самопроверка на симуляторе: запуск с демо-данными и автообновление с настоящего сайта (версия приложения занижена, поэтому обновление найдётся),
+      # повторный запуск уже из папки обновления, затем очистка данных WebKit (данные должны восстановиться из копии приложения)
+      # и резервная копия (файл в Documents + окно «Поделиться»). Итоги — аннотациями, снимки — в ветку ci-shots.
       - name: Smoke test in the iOS simulator
         continue-on-error: true
         run: |
           cd ios
+          sed -i '' -E 's/"version": [0-9]+/"version": 0/' Zarplata/web/update.json
           xcodebuild -project Zarplata.xcodeproj -target Zarplata -configuration Debug -sdk iphonesimulator ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO SYMROOT="$PWD/build-sim" build > sim-build.log 2>&1 \
             || { tail -n 40 sim-build.log; echo "::error::simulator build failed"; exit 1; }
@@ -74,12 +76,18 @@ jobs:
           xcrun simctl bootstatus "$UDID" -b > /dev/null
           xcrun simctl install "$UDID" "$APP"
           xcrun simctl launch "$UDID" uz.zarplata.app -smoke-demo
-          sleep 15
+          sleep 25
           xcrun simctl io "$UDID" screenshot sim-1-demo.png
           DATA=$(xcrun simctl get_app_container "$UDID" uz.zarplata.app data)
           xcrun simctl terminate "$UDID" uz.zarplata.app
           sleep 2
           echo "::notice::copy of data after demo: $(ls -l "$DATA/Library/Application Support" | tail -n +2 | xargs)"
+          echo "::notice::downloaded update: $(ls "$DATA/Library/Application Support/web" 2>/dev/null | xargs) files: $(ls "$DATA/Library/Application Support/web/"* 2>/dev/null | wc -l)"
+          xcrun simctl launch "$UDID" uz.zarplata.app -smoke-info
+          sleep 12
+          xcrun simctl terminate "$UDID" uz.zarplata.app
+          sleep 2
+          echo "::notice::after the update: $(cat "$DATA/Documents/smoke-info.txt" 2>/dev/null)"
           rm -rf "$DATA/Library/WebKit" "$DATA/Library/Caches"
           xcrun simctl launch "$UDID" uz.zarplata.app -smoke-backup
           sleep 15

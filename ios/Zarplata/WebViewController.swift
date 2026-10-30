@@ -15,7 +15,6 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
 
         let content = WKUserContentController()
         content.add(self, name: "app")
-        content.addUserScript(WKUserScript(source: Bridge.script(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let config = WKWebViewConfiguration()
         config.userContentController = content
         config.dataDetectorTypes = []
@@ -41,8 +40,24 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
     }
 
     private func loadApp() {
-        guard let dir = Bundle.main.url(forResource: "web", withExtension: nil) else { return }
+        guard let dir = Updater.beginLoad() else { return }
+        let content = web.configuration.userContentController
+        content.removeAllUserScripts()
+        content.addUserScript(WKUserScript(source: Bridge.script(), injectionTime: .atDocumentStart, forMainFrameOnly: true))
         web.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
+    }
+
+    private var pausedAt: Date?
+
+    func paused() { pausedAt = Date() }
+
+    /// Вернулись в приложение спустя время: если обновление уже скачано и человек ничего не вводит — показываем новую версию.
+    func resumed() {
+        Updater.check()
+        guard web != nil, let p = pausedAt, Date().timeIntervalSince(p) > 30, Updater.newerReady, presentedViewController == nil else { return }
+        web.evaluateJavaScript("(window.appBusy ? window.appBusy() : false)") { [weak self] busy, _ in
+            if (busy as? Bool) != true { self?.loadApp() }
+        }
     }
 
     // MARK: - сообщения от страницы
@@ -50,6 +65,8 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let m = message.body as? [String: Any], let cmd = m["cmd"] as? String else { return }
         switch cmd {
+        case "updateOk":
+            Updater.markGood()
         case "store":
             if let key = m["k"] as? String { Store.shared.set(key, m["v"] as? String) }
         case "saveFile":
@@ -153,13 +170,23 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
     private var smokeDone = false
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // страница не сообщила о запуске — новая версия не работает, возвращаемся к прошлой
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            if Updater.rollbackIfBad() { self?.loadApp() }
+        }
+        Updater.check()
         let args = ProcessInfo.processInfo.arguments
         guard !smokeDone else { return }
         let js: String
-        if args.contains("-smoke-demo") {
+        if args.contains("-smoke-info") {
+            js = """
+            window.Android.saveFile("smoke-info.txt", "text/plain", btoa(unescape(encodeURIComponent(JSON.stringify({ path: location.pathname.slice(-40), ver: window.Android.webVersion(), emps: window.__dbg.S().emps.length, marker: localStorage.getItem("zarplata.session") })))));
+            """
+        } else if args.contains("-smoke-demo") {
             // заодно проверяем, что из приложения доступен настоящий сервер входа Firebase: ключ заведомо неверный, ждём ответ 400
             js = """
             window.__dbg.ACT.demo();
+            localStorage.setItem("zarplata.session", "null");   // эта запись не дублируется в файл: по ней видно, что localStorage пережил смену папки обновления
             fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=bad", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
               .then(function (r) { return "google " + r.status; }, function (e) { return "FAIL " + e; })
               .then(function (t) { window.Android.saveFile("smoke-fetch.txt", "text/plain", btoa(t)); });

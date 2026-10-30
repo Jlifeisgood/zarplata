@@ -28,7 +28,7 @@ New-Item -ItemType Directory -Force "$work\assets", "$work\gen", "$work\classes"
 Copy-Item (Join-Path $here 'src') "$work\src" -Recurse
 Copy-Item (Join-Path $here 'res') "$work\res" -Recurse
 Copy-Item (Join-Path $here 'AndroidManifest.xml') "$work\AndroidManifest.xml"
-Get-ChildItem (Join-Path $here 'web') -File | Where-Object { $_.Name -notlike 'dev-*' } | Copy-Item -Destination "$work\assets"
+Get-ChildItem (Join-Path $here 'web') -File | Where-Object { ($_.Name -notlike 'dev-*') -and ($_.Name -notlike '*.apk') -and ($_.Name -ne 'update.sig') -and ($_.Name -ne 'sw.js') } | Copy-Item -Destination "$work\assets"
 
 Write-Host '1/6 resources (aapt2)' -ForegroundColor Cyan
 Invoke-Tool "$bt\aapt2.exe" compile --dir "$work\res" -o "$work\res.zip"

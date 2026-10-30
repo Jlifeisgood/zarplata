@@ -116,6 +116,9 @@
     ["Доплаты за часы", "Soatlar uchun qo'shimcha to'lovlar"], [" · доплаты", " · qo'shimcha to'lovlar"], ["Оплачено часов по окладу", "Oklad bo'yicha to'langan soatlar"],
     ["Оплачено по ставке ", "Stavka bo'yicha to'langan "], ["Сверхурочные: ", "Ish vaqtidan tashqari: "], ["Работа в выходной/праздник: ", "Dam olish/bayram kunidagi ish: "], ["Ночные: ", "Tungi: "],
     ["Часы берутся из табеля. Сумму выше можно задать вручную — доплаты за сверхурочные и выходные всё равно добавятся.", "Soatlar tabeldan olinadi. Yuqoridagi summani qo'lda kiritish mumkin — ortiqcha va dam olish kunlari uchun qo'shimcha to'lovlar baribir qo'shiladi."],
+    // автообновление
+    ["Приложение обновлено", "Ilova yangilandi"], ["Вышла новая версия приложения ", "Ilovaning yangi versiyasi chiqdi: "], [". Нажмите, чтобы установить.", ". O'rnatish uchun bosing."], [" · обновление ", " · yangilanish "],
+    ["Разрешите установку для «Зарплаты» и нажмите ещё раз", "«Zarplata» uchun o'rnatishga ruxsat bering va yana bosing"], ["Загружаю обновление…", "Yangilanish yuklanmoqda…"], ["Не удалось загрузить обновление. Проверьте интернет.", "Yangilanishni yuklab bo'lmadi. Internetni tekshiring."],
     // облако и доступы
     ["Напоминания о сроках работают в установленном приложении для Android и iPhone. Срок отчёта — до 15 числа (годовой — до 15 февраля), он показан на главном экране.", "Muddatlar haqida eslatmalar Android va iPhone uchun o'rnatilgan ilovada ishlaydi. Hisobot muddati — 15-sanagacha (yillik — 15-fevralgacha), u bosh ekranda ko'rsatilgan."],
     ["Вход", "Kirish"], ["Директор — по e-mail, сотрудник и бухгалтер — по логину, который выдал директор.", "Direktor — e-mail orqali, xodim va buxgalter — direktor bergan login orqali."],

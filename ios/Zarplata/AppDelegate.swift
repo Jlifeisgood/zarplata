@@ -34,9 +34,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     // даты напоминаний ставятся на год вперёд — продлеваем при каждом открытии
     func sceneDidBecomeActive(_ scene: UIScene) {
         Reminders.refresh()
+        (window?.rootViewController as? WebViewController)?.resumed()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {
         Store.shared.flush()
+        (window?.rootViewController as? WebViewController)?.paused()
     }
 }
