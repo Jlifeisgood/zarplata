@@ -1,0 +1,82 @@
+rules_version = '2';
+
+// Кто что видит в облаке приложения «Зарплата»:
+//  - директор (owner) и бухгалтер (admin) — всё по своей компании; бухгалтера может добавить только директор;
+//  - сотрудник (employee) — только свой расчётный листок и свои заявления; данные компании и чужие листки ему недоступны.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    // запись о доступе: members/<uid>_<id компании>
+    function myRole(cid) {
+      return get(/databases/$(database)/documents/members/$(request.auth.uid + '_' + cid)).data.role;
+    }
+    function isStaff(cid) { return signedIn() && myRole(cid) in ['owner', 'admin']; }
+    function isOwner(cid) { return signedIn() && myRole(cid) == 'owner'; }
+
+    match /companies/{cid} {
+      allow read: if isStaff(cid);
+      allow create: if signedIn() && request.resource.data.owner == request.auth.uid;
+      allow update: if isStaff(cid) && request.resource.data.owner == resource.data.owner;
+      allow delete: if isOwner(cid);
+
+      // данные компании частями: документ Firestore ограничен 1 МБ
+      match /blob/{part} {
+        allow read, write: if isStaff(cid);
+      }
+    }
+
+    match /members/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isStaff(resource.data.company));
+      allow create: if signedIn()
+        && id == request.resource.data.uid + '_' + request.resource.data.company
+        && (
+          // директор записывает сам себя, и только в компанию, которую создал
+          (request.resource.data.role == 'owner'
+            && request.resource.data.uid == request.auth.uid
+            && get(/databases/$(database)/documents/companies/$(request.resource.data.company)).data.owner == request.auth.uid)
+          || (request.resource.data.role == 'employee' && isStaff(request.resource.data.company))
+          || (request.resource.data.role == 'admin' && isOwner(request.resource.data.company))
+        );
+      allow update: if signedIn()
+        && isStaff(resource.data.company)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.company == resource.data.company
+        && request.resource.data.role == resource.data.role;
+      allow delete: if signedIn() && (
+        (resource.data.role == 'employee' && isStaff(resource.data.company))
+        || (resource.data.role == 'admin' && isOwner(resource.data.company))
+        // при удалении компании директор удаляет и свою запись
+        || (resource.data.role == 'owner' && resource.data.uid == request.auth.uid)
+      );
+    }
+
+    match /payslips/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isStaff(resource.data.company));
+      allow create: if isStaff(request.resource.data.company);
+      allow update: if isStaff(resource.data.company) && request.resource.data.company == resource.data.company;
+      allow delete: if isStaff(resource.data.company);
+    }
+
+    match /requests/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || isStaff(resource.data.company));
+      // заявление подаёт сотрудник от своего имени, по записи о своём доступе
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['company', 'emp', 'uid', 'name', 'type', 'from', 'to', 'note', 'status', 'created'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'new'
+        && request.resource.data.type in ['vac', 'sick', 'other']
+        && request.resource.data.note.size() <= 500
+        && get(/databases/$(database)/documents/members/$(request.auth.uid + '_' + request.resource.data.company)).data.emp == request.resource.data.emp;
+      // ответ даёт директор или бухгалтер; менять автора и компанию нельзя
+      allow update: if isStaff(resource.data.company)
+        && request.resource.data.company == resource.data.company
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.emp == resource.data.emp;
+      // своё заявление можно отозвать, пока на него не ответили
+      allow delete: if signedIn() && (
+        (resource.data.uid == request.auth.uid && resource.data.status == 'new')
+        || isStaff(resource.data.company)
+      );
+    }
+  }
+}

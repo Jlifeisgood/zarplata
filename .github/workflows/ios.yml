@@ -85,6 +85,7 @@ jobs:
           sleep 15
           xcrun simctl io "$UDID" screenshot sim-2-restored-backup.png
           echo "::notice::Documents after backup: $(ls -l "$DATA/Documents" | tail -n +2 | xargs)"
+          echo "::notice::request from the app to Firebase: $(cat "$DATA/Documents/smoke-fetch.txt" 2>/dev/null)"
 
       - name: Publish simulator screenshots to the ci-shots branch
         if: always()

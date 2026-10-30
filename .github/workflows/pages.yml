@@ -1,0 +1,38 @@
+# Веб-версия для сотрудников и iPhone: https://<владелец>.github.io/<репозиторий>/ — ветка gh-pages пересобирается из android/web при каждом изменении.
+name: Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/web/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Publish android/web to the gh-pages branch
+        run: |
+          mkdir -p /tmp/site
+          rsync -a --exclude 'dev-*' android/web/ /tmp/site/
+          touch /tmp/site/.nojekyll
+          # новая версия кэша: телефоны обновят приложение при следующем открытии
+          sed -i "s/var VERSION = \"[^\"]*\"/var VERSION = \"zarplata-${{ github.run_number }}\"/" /tmp/site/sw.js
+          cd /tmp/site
+          git init -q && git checkout -q -b gh-pages && git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com commit -qm "Web build ${{ github.run_number }}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+
+      - name: Ask GitHub Pages to rebuild
+        continue-on-error: true
+        run: |
+          curl -sS -X POST -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pages/builds"

@@ -106,6 +106,7 @@ function save() {
   const c = REG.list.find(x => x.id === REG.active);
   if (c) c.name = S.company.name;
   if (!lsSet(CO_KEY(REG.active), S) || !lsSet(REG_KEY, REG)) toast("Не удалось сохранить данные");
+  Team.onSave();
 }
 const coLabel = c => c.name || "Без названия";
 const coPrefix = () => (S.company.name || "").replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "");
@@ -276,13 +277,15 @@ function toast(msg) {
 /* Сообщения от приложения для iPhone (папка ios/): ошибка сохранения файла, запрет уведомлений */
 window.nativeToast = msg => toast(msg);
 window.nativeRemOff = () => { ui.rem = false; render(); };
+let sheetTok = 0;
 function openSheet(html) {
   const s = $("#sheet");
   s.innerHTML = '<div class="grab"></div>' + html;
   s.scrollTop = 0;
-  requestAnimationFrame(() => { s.classList.add("on"); $("#backdrop").classList.add("on"); });
+  const tok = ++sheetTok;   // шторку могли закрыть раньше, чем сработает кадр анимации
+  requestAnimationFrame(() => { if (tok === sheetTok) { s.classList.add("on"); $("#backdrop").classList.add("on"); } });
 }
-function closeSheet() { $("#sheet").classList.remove("on"); $("#backdrop").classList.remove("on"); D = null; }
+function closeSheet() { sheetTok++; $("#sheet").classList.remove("on"); $("#backdrop").classList.remove("on"); D = null; }
 const sheetOpen = () => $("#sheet").classList.contains("on");
 window.handleBack = () => {
   if (sheetOpen()) { closeSheet(); return true; }
@@ -336,9 +339,12 @@ function empty(icon, title, text, btn) {
 /* ---------- каркас ---------- */
 function setTab(t) { ui.tab = t; render(); window.scrollTo(0, 0); }
 function render() {
-  document.body.classList.toggle("wel-on", !S.setup);
+  const empMode = Team.employeeMode();
+  document.body.classList.toggle("emp-on", empMode);
+  document.body.classList.toggle("wel-on", !empMode && !S.setup);
   applyTheme();
   const app = $("#app");
+  if (empMode) { app.innerHTML = Team.employeeView(); return; }
   if (!S.setup) { app.innerHTML = welcome(); return; }
   document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === ui.tab));
   app.innerHTML = ({ pay: viewPay, team: viewTeam, rep: viewRep, set: viewSet })[ui.tab]();
@@ -361,7 +367,7 @@ function welcome() {
     '<label class="f"><span>Название компании</span><input class="in" id="w-name" placeholder="Например, ООО «Ромашка»" autocomplete="off"></label>' +
     '<label class="f"><span>ИНН (по желанию)</span><input class="in" id="w-inn" inputmode="numeric" maxlength="9" placeholder="9 цифр"></label>' +
     sw("swd", "split", D && D.split, "Есть производство", "Разделять сотрудников на АУП и производство") +
-    '<div class="stack"><button class="btn" data-act="start">Начать</button><button class="btn ghost" data-act="demo">Посмотреть на примере</button></div></div>';
+    '<div class="stack"><button class="btn" data-act="start">Начать</button><button class="btn ghost" data-act="demo">Посмотреть на примере</button>' + Team.welcomeBtn() + '</div></div>';
 }
 
 /* ---------- вкладка «Зарплата» ---------- */
@@ -384,7 +390,7 @@ function viewPay() {
   let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + coChip() + '</div></div><div class="page">';
   h += '<div class="month"><button class="ib" data-act="ym" data-d="-1" aria-label="Предыдущий месяц">' + ICON.left + '</button><div class="m">' + ymLabel(ym) +
     (ym === curYm() ? "<small>текущий месяц</small>" : "") + '</div><button class="ib" data-act="ym" data-d="1" aria-label="Следующий месяц">' + ICON.right + '</button></div>';
-  h += yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
+  h += Team.payBanner() + yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
   if (!S.emps.length) {
     return h + empty(ICON.team, "Пока никого нет", "Добавьте сотрудника — укажите ФИО и начисление, остальное посчитается само.",
       '<button class="btn" data-act="newEmp">' + ICON.plus + 'Добавить сотрудника</button>') + "</div>";
@@ -707,7 +713,7 @@ function openComp() {
   D = { kind: "comp", id: e.id, avgTouched: false, avgYm: fire.slice(0, 7) };
   openSheet('<h2>Расчёт при увольнении</h2><p class="sub">' + esc(fullName(e)) + ' · принят ' + esc(isoToDmy(e.hire || e.from + "-01")) + '</p>' +
     dateField("c-fire", fire, "Дата увольнения (последний рабочий день)") +
-    '<div class="two"><label class="f"><span>Отпуск в год, дн.</span><input class="in" id="c-leave" inputmode="numeric" value="21" autocomplete="off"></label>' +
+    '<div class="two"><label class="f"><span>Отпуск в год, дн.</span><input class="in" id="c-leave" inputmode="numeric" value="' + (e.leave || 21) + '" autocomplete="off"></label>' +
     '<label class="f"><span>Использовано в этом году, дн.</span><input class="in" id="c-used" inputmode="numeric" value="0" autocomplete="off"></label></div>' +
     '<label class="f"><span>Неиспользовано за прошлые годы, дн.</span><input class="in" id="c-prev" inputmode="numeric" value="0" autocomplete="off"></label>' +
     '<label class="f"><span>Средняя месячная зарплата, сум</span><input class="in" id="c-avg" inputmode="decimal" value="' + fmt(avgMonthly(e, fire)) + '" autocomplete="off"></label>' +
@@ -960,6 +966,9 @@ function openEmp(id) {
     '<div class="two">' + dateField("f-hire", v.hire || (e ? v.from + "-01" : (ui.ym === curYm() ? todayIso() : ui.ym + "-01")), "Дата принятия *") +
     dateField("f-to", v.fire || (v.to ? v.to + "-" + pad(new Date(+v.to.slice(0, 4), +v.to.slice(5), 0).getDate()) : ""), "Дата увольнения") + '</div>' +
     (e ? '<div class="hint">Дату увольнения заполняйте, когда сотрудник уходит — начисления будут по месяц увольнения включительно.</div>' : "") +
+    '<div class="two"><label class="f"><span>Отпуск в год, дн.</span><input class="in" id="f-leave" inputmode="numeric" value="' + (v.leave || 21) + '" autocomplete="off"></label>' +
+    '<label class="f"><span>Поправка остатка отпуска, дн.</span><input class="in" id="f-leaveadj" value="' + (v.leaveAdj || "") + '" placeholder="0" autocomplete="off"></label></div>' +
+    '<div class="hint" style="margin-top:-6px">Поправка — если на начало учёта уже был остаток (+) или отпуск отгулян вне приложения (−). Остаток виден сотруднику в его кабинете.</div>' +
     '<details class="more"><summary>Для отчёта в налоговую</summary><div class="f"><span>Статус</span>' + seg("res", D.res, [["1", "Резидент"], ["2", "Нерезидент"]]) + '</div>' +
     '<div class="f"><span>Форма контракта (для трудовых)</span>' + seg("ck", D.ck, [["1", "Основной"], ["2", "Совместитель"], ["5", "Надомник"]]) + '</div>' +
     '<label class="f"><span>Рабочее время, ставок (1; 0,5; 0,25…)</span><input class="in" id="f-rate" inputmode="decimal" value="' + String(v.rate || 1).replace(".", ",") + '"></label>' +
@@ -1013,6 +1022,7 @@ function saveEmp() {
   const rate = Number(g("f-rate").replace(",", ".")) || 1;
   const data = { last, first, mid: g("f-mid"), pinfl, pos: g("f-pos"), dept: S.company.split ? D.dept : "aup", type: D.type, mode: D.mode, amount: amt, from, hire, to, fire, res: D.res, rate, wd: Number(D.wd) === 6 ? 6 : 5,
     hrs: isHourlyDraft() ? D.hrs.map(x => +x || 0) : null, basis: isHourlyDraft() && D.basis === "hour" ? "hour" : "month",
+    leave: Number(g("f-leave").replace(/\D/g, "")) || 21, leaveAdj: Number(g("f-leaveadj").replace(",", ".").replace(/[^\d.\-−]/g, "").replace("−", "-")) || 0,
     ben: D.type === "gph" ? "" : $("#f-ben").value, benId: g("f-benid"), card: g("f-card"), ck: D.ck, seat: Number($("#f-seat").value) || 1, wp };
   if (D.id) {
     const e = S.emps.find(x => x.id === D.id);
@@ -1216,15 +1226,16 @@ function viewSet() {
       '<div class="hint">Льгота считается по месяцам: если дата — 1-е число, то с этого месяца, иначе со следующего (льготы действуют с 1-го числа месяца, следующего за включением в реестр). Пусто — льгота для всех месяцев.</div>' : "");
   h += '<div class="sec">Правила ' + RULES_YEAR + ' года</div><button class="item card" data-act="rates" style="border:0"><div class="grow"><div class="nm">НДФЛ ' + pct(R.itpark ? R.pitIt : R.pit) + ' · ИНПС ' + pct(R.inps) + ' · ЕСП ' + pct(R.itpark ? R.espIt : R.budget ? R.espBudget : R.esp) + (R.itpark ? ' · IT Park' : '') + '</div>' +
     '<div class="sb">ИНПС ' + (R.inpsInsidePit ? "засчитывается в НДФЛ" : "удерживается сверху") + ' · нажмите, чтобы изменить</div></div>' + ICON.right.replace("<svg", '<svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"') + '</button>';
+  h += Team.settingsBlock();
   h += '<div class="sec">Напоминания</div>' + (A && A.setReminders ? sw("rem", "rem", remOn(), "О сроках отчёта", "12 и 15 числа в 09:00: НДФЛ и соцналог — до 15 числа, годовой отчёт — до 15 февраля")
-    : '<div class="hint">Напоминания о сроках работают в приложении для Android. Срок отчёта — до 15 числа (годовой — до 15 февраля), он показан на главном экране.</div>');
+    : '<div class="hint">Напоминания о сроках работают в установленном приложении для Android и iPhone. Срок отчёта — до 15 числа (годовой — до 15 февраля), он показан на главном экране.</div>');
   h += '<div class="sec">Язык / Til</div>' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang");
   h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
   h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
     '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
     '<button class="btn bad" data-act="delCo">Удалить эту компанию</button>' +
     '<button class="btn bad" data-act="wipe">' + (REG.list.length > 1 ? "Стереть все компании и данные" : "Стереть все данные") + '</button></div><input type="file" id="restore-file" accept=".json,application/json" hidden>';
-  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + '</b><br>Данные хранятся только на этом телефоне, приложение не выходит в интернет. Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
+  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом телефоне и на сервере (Google Firebase)." : "Данные хранятся только на этом телефоне." + (Cloud.configured() ? " В интернет приложение выходит, только если вы войдёте в аккаунт." : " Приложение не выходит в интернет.")) + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
   return h;
 }
 function openRates() {
@@ -1307,7 +1318,7 @@ function restoreFrom(file) {
         const theme = REG.theme;
         REG.list.forEach(c => { try { localStorage.removeItem(CO_KEY(c.id)); } catch (e) { } });
         list.forEach(c => lsSet(CO_KEY(c.id), normalize(s.companies[c.id])));
-        REG = { v: 1, active: list.some(c => c.id === s.reg.active) ? s.reg.active : list[0].id, list: list.map(c => ({ id: c.id, name: c.name || "" })), theme };
+        REG = { v: 1, active: list.some(c => c.id === s.reg.active) ? s.reg.active : list[0].id, list: list.map(c => (c.cloud ? { id: c.id, name: c.name || "", cloud: Object.assign({}, c.cloud, { dirty: true }) } : { id: c.id, name: c.name || "" })), theme };
         S = normalize(lsGet(CO_KEY(REG.active)));
         save(); closeSheet(); render(); toast("Данные восстановлены");
         return;
@@ -1340,6 +1351,7 @@ function switchCompany(id) {
   S = normalize(lsGet(CO_KEY(id))) || blank();
   save(); ui.filter = "all"; ui.showOld = false; D = null;
   closeSheet(); render(); window.scrollTo(0, 0); toast("Открыта: " + coLabel({ name: S.company.name }));
+  Team.onSwitch();
 }
 function openNewCo() {
   D = { kind: "newco", split: false };
@@ -1358,6 +1370,7 @@ function createCompany() {
   ui.tab = "pay"; ui.filter = "all"; closeSheet(); render(); window.scrollTo(0, 0); toast("Компания создана");
 }
 function deleteCompany() {
+  if (Team.linked()) { toast("Компания подключена к облаку. Сначала отключите её: Настройки → Доступ сотрудников и облако."); return; }
   const name = coLabel({ name: S.company.name });
   if (!confirmBox("Удалить компанию «" + name + "» со всеми сотрудниками и начислениями? Это нельзя отменить.")) return;
   if (!confirmBox("Точно удалить «" + name + "»? Сначала можно сохранить резервную копию.")) return;
@@ -1470,6 +1483,7 @@ const ACT = {
     S.aids = (S.aids || []).filter(a => a.emp !== e.id);
     S.pays = (S.pays || []).filter(p => p.emp !== e.id); S.deds = (S.deds || []).filter(d => d.emp !== e.id);
     S.marks = (S.marks || []).filter(k => k.emp !== e.id); S.hours = (S.hours || []).filter(k => k.emp !== e.id);
+    Team.onEmpDeleted(e.id);
     Object.values(S.months).forEach(m => { if (m.e) delete m.e[e.id]; });
     save(); closeSheet(); render(); toast("Удалено");
   },
@@ -1500,12 +1514,14 @@ const ACT = {
   wipe: () => {
     if (!confirmBox("Стереть ВСЕ компании, сотрудников и начисления? Это нельзя отменить.")) return;
     if (!confirmBox("Точно стереть всё? Сначала можно сохранить резервную копию.")) return;
+    Team.forgetOnWipe();
     REG.list.forEach(c => { try { localStorage.removeItem(CO_KEY(c.id)); } catch (e) { } });
     const id = uid(), theme = REG.theme;
     REG = { v: 1, active: id, list: [{ id, name: "" }], theme };
     S = blank(); save(); D = { split: false }; ui.tab = "pay"; ui.filter = "all"; render();
   }
 };
+Object.assign(ACT, Team.actions);
 document.addEventListener("click", ev => {
   if (ev.target.id === "backdrop") { closeSheet(); return; }
   const t = ev.target.closest("[data-act]");
@@ -1557,4 +1573,5 @@ D = { split: false };
 render();
 I18N.setLang(REG.lang || "ru");
 if (A && A.setLang) A.setLang(REG.lang || "ru");
-window.__dbg = { S: () => S, ui, ACT };
+Team.start();
+window.__dbg = { S: () => S, REG: () => REG, ui, ACT, Team };

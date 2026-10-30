@@ -18,9 +18,10 @@ enum Bridge {
           if (ls) {
             try { Object.keys(saved).forEach(function (k) { if (ls.getItem(k) === null) ls.setItem(k, saved[k]); }); } catch (e) { }
             var set = Storage.prototype.setItem, rm = Storage.prototype.removeItem;
-            Storage.prototype.setItem = function (k, v) { set.call(this, k, v); if (this === ls) post({ cmd: "store", k: String(k), v: String(v) }); };
-            Storage.prototype.removeItem = function (k) { rm.call(this, k); if (this === ls) post({ cmd: "store", k: String(k), v: null }); };
-            try { for (var i = 0; i < ls.length; i++) { var key = ls.key(i); post({ cmd: "store", k: key, v: ls.getItem(key) }); } } catch (e) { }
+            var skip = "zarplata.session";   // вход в аккаунт в резервную копию iPhone не попадает
+            Storage.prototype.setItem = function (k, v) { set.call(this, k, v); if (this === ls && k !== skip) post({ cmd: "store", k: String(k), v: String(v) }); };
+            Storage.prototype.removeItem = function (k) { rm.call(this, k); if (this === ls && k !== skip) post({ cmd: "store", k: String(k), v: null }); };
+            try { for (var i = 0; i < ls.length; i++) { var key = ls.key(i); if (key !== skip) post({ cmd: "store", k: key, v: ls.getItem(key) }); } } catch (e) { }
           }
           window.Android = {
             platform: "ios",

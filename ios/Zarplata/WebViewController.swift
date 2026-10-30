@@ -156,8 +156,15 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
         let args = ProcessInfo.processInfo.arguments
         guard !smokeDone else { return }
         let js: String
-        if args.contains("-smoke-demo") { js = "window.__dbg.ACT.demo()" }
-        else if args.contains("-smoke-backup") { js = "window.__dbg.ACT.backup()" }
+        if args.contains("-smoke-demo") {
+            // заодно проверяем, что из приложения доступен настоящий сервер входа Firebase: ключ заведомо неверный, ждём ответ 400
+            js = """
+            window.__dbg.ACT.demo();
+            fetch("https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=bad", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+              .then(function (r) { return "google " + r.status; }, function (e) { return "FAIL " + e; })
+              .then(function (t) { window.Android.saveFile("smoke-fetch.txt", "text/plain", btoa(t)); });
+            """
+        } else if args.contains("-smoke-backup") { js = "window.__dbg.ACT.backup()" }
         else { return }
         smokeDone = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { webView.evaluateJavaScript(js, completionHandler: nil) }
