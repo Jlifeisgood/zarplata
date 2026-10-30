@@ -19,7 +19,6 @@ import android.webkit.JsResult;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
-import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -46,7 +45,9 @@ public class MainActivity extends Activity {
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
-        s.setAllowFileAccess(false);          // /android_asset доступен всегда, остальные файлы — нет
+        s.setAllowFileAccess(true);           // страница обновления лежит в папке приложения (см. Updater); читать чужие файлы из JS нельзя: две настройки ниже
+        s.setAllowFileAccessFromFileURLs(false);
+        s.setAllowUniversalAccessFromFileURLs(false);
         s.setAllowContentAccess(true);        // выбор файла копии через системный диалог (content://)
         s.setBuiltInZoomControls(false);
         s.setTextZoom(100);
@@ -57,9 +58,6 @@ public class MainActivity extends Activity {
                 if ("file".equals(u.getScheme())) return false;
                 try { startActivity(new Intent(Intent.ACTION_VIEW, u)); } catch (Exception ignored) { }
                 return true;
-            }
-            @Override public WebResourceResponse shouldInterceptRequest(WebView v, WebResourceRequest r) {
-                return Updater.intercept(r.getUrl());
             }
             @Override public void onPageFinished(WebView v, String url) {
                 // страница не сообщила о запуске — новая версия не работает, возвращаемся к прошлой
@@ -92,7 +90,7 @@ public class MainActivity extends Activity {
 
     private void loadPage() {
         Updater.beginLoad(this);
-        web.loadUrl("file:///android_asset/index.html");
+        web.loadUrl(Updater.pageUrl(this));
     }
 
     private void checkUpdates() {

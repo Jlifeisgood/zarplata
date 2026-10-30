@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "minApi": 1,
-  "apk": { "code": 6, "name": "1.3", "file": "Zarplata.apk", "sha256": "6cce39ea65bc3b9aae43496a0aa2aeabc7e53383dfb1d6e70b3bc1fa2db3fd74" },
+  "apk": { "code": 6, "name": "1.3", "file": "Zarplata.apk", "sha256": "0220b278312e50bc436836f99f9cc7c40c4152cefe46189b0e0b042fedd53bca" },
   "files": {
     "app.css": "117c8a8723071eb96f395d5a894a98fe78233eb379edbdd41b69f2bf8ac59c9b",
     "app.js": "f1d86617fbe95bad1d4d5d2df09cc71cc481e3e6157560284fca536d551332b0",

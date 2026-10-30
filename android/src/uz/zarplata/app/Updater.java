@@ -9,7 +9,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.provider.Settings;
 import android.util.Base64;
-import android.webkit.WebResourceResponse;
 
 import org.json.JSONObject;
 
@@ -32,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Автообновление. Интерфейс и расчёты (папка web) обновляются сами: новые файлы скачиваются с сайта приложения, проверяются подписью
- * (update.json подписан ключом разработчика, в нём SHA-256 каждого файла) и подставляются вместо файлов из APK — адрес страницы и её данные не меняются.
+ * (update.json подписан ключом разработчика, в нём SHA-256 каждого файла) и страница загружается из этой папки вместо файлов APK; данные (localStorage) общие для всех file://.
  * Если новая версия не запустилась, приложение возвращается к последней рабочей. Новый APK нужен, только если менялся Java-код: о нём сообщаем на экране.
  */
 final class Updater {
@@ -41,11 +40,9 @@ final class Updater {
     private static final String BASE = "https://jlifeisgood.github.io/zarplata/";
     private static final String PUB_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/1VvFtdkw7t6Wj8c9bfMzTNXAIBR3OvM7uTksVuaus9OiLB6Iv3azVv1lz8h+TmntxJsWTTa48E7cskpwbgqOg==";
     private static final long CHECK_EVERY_MS = 6 * 3600 * 1000L;
-    private static final String ASSET_PREFIX = "/android_asset/";
     private static final String SAFE_NAME = "[A-Za-z0-9._-]+";
 
-    private static volatile File servingDir = null;   // откуда берутся файлы для текущей загрузки страницы
-    private static volatile int serving = 0;
+    private static volatile int serving = 0;          // показанная версия: 0 — из APK
     private static volatile boolean okThisLoad = false;
     private static final AtomicBoolean checking = new AtomicBoolean(false);
 
@@ -74,7 +71,6 @@ final class Updater {
             v = 0;
         }
         serving = v;
-        servingDir = v != 0 ? dir(c, v) : null;
         okThisLoad = false;
     }
     static boolean newerReady(Context c) { return active(c) != serving; }
@@ -104,25 +100,9 @@ final class Updater {
         return true;
     }
 
-    /** Файл для страницы: из обновления, если он там есть, иначе из APK */
-    static WebResourceResponse intercept(Uri u) {
-        File base = servingDir;
-        String path = u.getPath();
-        if (base == null || path == null || !path.startsWith(ASSET_PREFIX)) return null;
-        String name = path.substring(ASSET_PREFIX.length());
-        if (!name.matches(SAFE_NAME)) return null;
-        File f = new File(base, name);
-        if (!f.isFile()) return null;
-        try { return new WebResourceResponse(mime(name), "UTF-8", new FileInputStream(f)); }
-        catch (IOException e) { return null; }
-    }
-    private static String mime(String n) {
-        if (n.endsWith(".js")) return "application/javascript";
-        if (n.endsWith(".css")) return "text/css";
-        if (n.endsWith(".html")) return "text/html";
-        if (n.endsWith(".png")) return "image/png";
-        if (n.endsWith(".json") || n.endsWith(".webmanifest")) return "application/json";
-        return "application/octet-stream";
+    /** Адрес страницы для текущей версии */
+    static String pageUrl(Context c) {
+        return serving != 0 ? "file://" + new File(dir(c, serving), "index.html").getAbsolutePath() : "file:///android_asset/index.html";
     }
 
     /** Проверка обновлений в фоне, не чаще раза в 6 часов. onChange — появилось обновление или новый APK. */
@@ -166,7 +146,8 @@ final class Updater {
             if (!name.matches(SAFE_NAME)) throw new IOException("name");
             File old = cur != 0 ? new File(dir(c, cur), name) : null;
             if (old != null && old.isFile() && sha.equals(sha256(readFile(old)))) { write(new File(tmp, name), readFile(old)); continue; }
-            if (sha.equals(assetSha(c, name))) continue;    // такой файл уже есть в APK
+            byte[] own = readAsset(c, name);                // такой файл уже есть в APK
+            if (own != null && sha.equals(sha256(own))) { write(new File(tmp, name), own); continue; }
             byte[] b = get(BASE + name + "?v=" + ver, 30 << 20);
             if (!sha.equals(sha256(b))) throw new IOException("hash " + name);
             write(new File(tmp, name), b);
@@ -262,9 +243,9 @@ final class Updater {
     private static void write(File f, byte[] b) throws IOException {
         try (OutputStream out = new FileOutputStream(f)) { out.write(b); }
     }
-    private static String assetSha(Context c, String name) {
-        try (InputStream in = c.getAssets().open(name)) { return sha256(readAll(in, 100 << 20)); }
-        catch (Exception e) { return ""; }
+    private static byte[] readAsset(Context c, String name) {
+        try (InputStream in = c.getAssets().open(name)) { return readAll(in, 100 << 20); }
+        catch (Exception e) { return null; }
     }
     private static String sha256(byte[] b) throws Exception {
         StringBuilder s = new StringBuilder();

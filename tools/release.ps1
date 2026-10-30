@@ -22,6 +22,8 @@ $version = if ($old) { [int]$old.version + 1 } else { 1 }
 $apkFile = Join-Path $web 'Zarplata.apk'
 if ($VersionCode -gt 0) {
     if (-not $VersionName) { throw 'VersionName is required together with VersionCode' }
+    # the APK carries this version number, so a fresh install does not treat the same files as an update
+    [IO.File]::WriteAllText($manifest, "{ `"version`": $version }`n", (New-Object Text.UTF8Encoding($false)))
     & (Join-Path $project 'android\build.ps1') -VersionCode $VersionCode -VersionName $VersionName -Tools $Tools
     Copy-Item (Join-Path $project 'Zarplata.apk') $apkFile -Force
     $apkCode = $VersionCode; $apkName = $VersionName
