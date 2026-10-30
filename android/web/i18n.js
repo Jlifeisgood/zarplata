@@ -117,6 +117,7 @@
     ["Оплачено по ставке ", "Stavka bo'yicha to'langan "], ["Сверхурочные: ", "Ish vaqtidan tashqari: "], ["Работа в выходной/праздник: ", "Dam olish/bayram kunidagi ish: "], ["Ночные: ", "Tungi: "],
     ["Часы берутся из табеля. Сумму выше можно задать вручную — доплаты за сверхурочные и выходные всё равно добавятся.", "Soatlar tabeldan olinadi. Yuqoridagi summani qo'lda kiritish mumkin — ortiqcha va dam olish kunlari uchun qo'shimcha to'lovlar baribir qo'shiladi."],
     // автообновление
+    ["Данные хранятся только на этом телефоне и никуда не отправляются, через интернет приложение только получает обновления.", "Ma'lumotlar faqat shu telefonda saqlanadi va hech qayerga yuborilmaydi, internet orqali ilova faqat yangilanishlarni oladi."],
     ["Приложение обновлено", "Ilova yangilandi"], ["Вышла новая версия приложения ", "Ilovaning yangi versiyasi chiqdi: "], [". Нажмите, чтобы установить.", ". O'rnatish uchun bosing."], [" · обновление ", " · yangilanish "],
     ["Разрешите установку для «Зарплаты» и нажмите ещё раз", "«Zarplata» uchun o'rnatishga ruxsat bering va yana bosing"], ["Загружаю обновление…", "Yangilanish yuklanmoqda…"], ["Не удалось загрузить обновление. Проверьте интернет.", "Yangilanishni yuklab bo'lmadi. Internetni tekshiring."],
     // облако и доступы

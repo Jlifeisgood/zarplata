@@ -1240,8 +1240,8 @@ function viewSet() {
     '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
     '<button class="btn bad" data-act="delCo">Удалить эту компанию</button>' +
     '<button class="btn bad" data-act="wipe">' + (REG.list.length > 1 ? "Стереть все компании и данные" : "Стереть все данные") + '</button></div><input type="file" id="restore-file" accept=".json,application/json" hidden>';
-  h += '<div class="sec"></div>' + apkBanner();
-  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + (A && A.webVersion ? " · обновление " + A.webVersion() : "") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом телефоне и на сервере (Google Firebase)." : "Данные хранятся только на этом телефоне." + (Cloud.configured() ? " В интернет приложение выходит, только если вы войдёте в аккаунт." : " Приложение не выходит в интернет.")) + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
+  if (apkBanner()) h += '<div style="height:14px"></div>' + apkBanner();
+  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + (A && A.webVersion ? " · обновление " + A.webVersion() : "") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом телефоне и на сервере (Google Firebase)." : "Данные хранятся только на этом телефоне и никуда не отправляются, через интернет приложение только получает обновления.") + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
   return h;
 }
 function openRates() {
