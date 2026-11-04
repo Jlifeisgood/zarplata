@@ -3,6 +3,9 @@
    Загружается до app.js: функции и данные приложения (S, REG, save, render…) берутся в момент вызова. */
 const Team = (() => {
   const W = Cloud.W;
+  /* Доступы сотрудников и заявления через сервер выключены: листок сотрудника — открытые данные, а на сервер уходит только шифр.
+     Сотрудникам листки отправляет директор файлом (slipfile.js). */
+  const EMPLOYEES = false;
   const CHUNK = 300000;   // знаков в одном документе: предел Firestore — 1 МБ, кириллица занимает 2 байта
   const ME = "zarplata.me", EMP = "zarplata.emp", PUB = cid => "zarplata.pub." + cid;
   const rd = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
@@ -77,7 +80,7 @@ const Team = (() => {
     try {
       for (const c of REG.list.filter(x => x.cloud && x.cloud.dirty)) await push(c);
       const a = linked();
-      if (a) await publish(a);
+      if (a && EMPLOYEES) await publish(a);
       syncError = ""; syncedAt = Date.now();
     } catch (e) {
       syncError = Cloud.errText(e);
@@ -87,6 +90,30 @@ const Team = (() => {
       if (again) { again = false; schedule(300); }
     }
   }
+  /* ---------- шифрование: данные компании уходят на сервер только зашифрованными ----------
+     AES-GCM 256, ключ из пароля шифрования (PBKDF2-SHA256). Пароль шифрования на сервер не отправляется, ключ хранится только на устройствах директора.
+     Сервер видит лишь шифр, номер версии и служебные поля; по проверочному шифру (kIv/kData) новое устройство узнаёт, верен ли введённый пароль. */
+  const KEY = cid => "zarplata.key." + cid, ITER = 310000, CHECK = "zarplata";
+  const b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+  const unb64 = s => Uint8Array.from(atob(s), ch => ch.charCodeAt(0));
+  const rand = n => crypto.getRandomValues(new Uint8Array(n));
+  const canEncrypt = () => !!(window.crypto && crypto.subtle);
+  async function deriveKey(pass, salt) {
+    const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+    return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: ITER, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  }
+  async function saveKey(cid, key) { wr(KEY(cid), b64(new Uint8Array(await crypto.subtle.exportKey("raw", key)))); }
+  async function loadKey(cid) { const r = rd(KEY(cid)); return r ? crypto.subtle.importKey("raw", unb64(r), "AES-GCM", false, ["encrypt", "decrypt"]) : null; }
+  async function encrypt(key, text) {
+    const iv = rand(12), ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(text));
+    return { iv: b64(iv), data: b64(new Uint8Array(ct)) };
+  }
+  async function decrypt(key, iv, data) {
+    try { return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv) }, key, unb64(data))); }
+    catch (e) { throw new Cloud.CloudError("BAD_KEY"); }
+  }
+  const encFields = c => ({ enc: 1, salt: c.cloud.salt, kIv: c.cloud.kIv, kData: c.cloud.kData });
+
   function split(raw) {
     const parts = [];
     for (let i = 0; i < raw.length; i += CHUNK) parts.push(raw.slice(i, i + CHUNK));
@@ -95,9 +122,11 @@ const Team = (() => {
   async function push(c) {
     const raw = localStorage.getItem(CO_KEY(c.id));
     if (!raw) return;
-    const cid = c.cloud.cid, rev = (c.cloud.rev || 0) + 1, parts = split(raw);
+    const cid = c.cloud.cid, key = await loadKey(cid);
+    if (!key) { c.cloud.needKey = true; lsSet(REG_KEY, REG); throw new Cloud.CloudError("NEED_KEY"); }
+    const sealed = await encrypt(key, raw), rev = (c.cloud.rev || 0) + 1, parts = split(sealed.data);
     const pre = c.cloud.ut ? { updateTime: c.cloud.ut } : { exists: true };
-    const writes = [W.set("companies/" + cid, { owner: c.cloud.owner, name: c.name || "", rev, parts: parts.length, updated: nowIso(), by: Cloud.session().uid }, pre)];
+    const writes = [W.set("companies/" + cid, Object.assign({ owner: c.cloud.owner, name: "", rev, parts: parts.length, iv: sealed.iv, updated: nowIso(), by: Cloud.session().uid }, encFields(c)), pre)];
     parts.forEach((data, i) => writes.push(W.set("companies/" + cid + "/blob/" + i, { rev, data })));
     for (let i = parts.length; i < (c.cloud.parts || 0); i++) writes.push(W.del("companies/" + cid + "/blob/" + i));
     let r;
@@ -127,7 +156,8 @@ const Team = (() => {
   async function pull(c) {
     const head = await Cloud.get("companies/" + c.cloud.cid);
     if (!head) { gone(c); return; }
-    c.cloud.owner = head.data.owner;
+    Object.assign(c.cloud, { owner: head.data.owner, salt: head.data.salt, kIv: head.data.kIv, kData: head.data.kData });
+    if (head.data.enc && !(await loadKey(c.cloud.cid))) { c.cloud.needKey = true; lsSet(REG_KEY, REG); softRender(); return; }   // новое устройство: ждём пароль шифрования
     if ((head.data.rev || 0) <= (c.cloud.rev || 0)) { lsSet(REG_KEY, REG); return; }
     if (c.cloud.dirty) { await conflict(c); return; }
     await pullData(c, head);
@@ -141,7 +171,8 @@ const Team = (() => {
         if (!head) { gone(c); return; }
         continue;
       }
-      const raw = parts.map(p => p.data.data).join("");
+      let raw = parts.map(p => p.data.data).join("");
+      if (head.data.enc) raw = await decrypt(await loadKey(cid), head.data.iv, raw);
       let s = null;
       try { s = normalize(JSON.parse(raw)); } catch (e) { }
       if (!s) throw new Cloud.CloudError("BAD_DATA");
@@ -176,7 +207,7 @@ const Team = (() => {
       try { localStorage.removeItem(CO_KEY(REG.list[0].id)); } catch (e) { }
       REG.list = [];
     }
-    const c = { id: uid(), name: m.companyName || "", cloud: { cid: m.company, role: m.role, owner: "", rev: 0, ut: null, parts: 0, dirty: false } };
+    const c = { id: uid(), name: m.companyName || "Компания из облака", cloud: { cid: m.company, role: m.role, owner: "", rev: 0, ut: null, parts: 0, dirty: false } };
     REG.list.push(c);
     if (!REG.list.some(x => x.id === REG.active) || !S.setup) { REG.active = c.id; S = blank(); }
     lsSet(REG_KEY, REG);
@@ -279,9 +310,10 @@ const Team = (() => {
       await pull(c);
     }
     const a = linked();
-    if (a) { await membersOf(a.cloud.cid, true); await loadReqs(a.cloud.cid); }
+    if (a && EMPLOYEES) { await membersOf(a.cloud.cid, true); await loadReqs(a.cloud.cid); }
     await flush();
     softRender();
+    if (a && a.cloud.needKey && !sheetOpen()) openKey();   // новое устройство: сразу просим пароль шифрования
   }
   async function syncEmployee() {
     const s = Cloud.session();
@@ -327,21 +359,21 @@ const Team = (() => {
   async function onSwitch() {
     const a = linked();
     if (!a || !Cloud.session()) return;
-    try { await pull(a); await membersOf(a.cloud.cid, true); await loadReqs(a.cloud.cid); await flush(); softRender(); }
+    try { await pull(a); if (EMPLOYEES) { await membersOf(a.cloud.cid, true); await loadReqs(a.cloud.cid); } await flush(); softRender(); }
     catch (e) { report(e, true); }
   }
 
   /* ---------- вход ---------- */
   function openLogin() {
     D = { kind: "login" };
-    openSheet('<h2>Вход</h2><p class="sub">Директор — по e-mail, сотрудник и бухгалтер — по логину, который выдал директор.</p>' +
-      '<label class="f"><span>Логин или e-mail</span><input class="in" id="l-login" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+    openSheet('<h2>Вход</h2><p class="sub">E-mail и пароль вашего аккаунта. Пароль шифрования данных приложение спросит отдельно.</p>' +
+      '<label class="f"><span>E-mail</span><input class="in" id="l-login" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
       '<label class="f"><span>Пароль</span><input class="in" id="l-pass" type="password" autocomplete="current-password"></label>' +
       '<div class="stack"><button class="btn" data-act="teamDoLogin">Войти</button><button class="btn ghost" data-act="teamReset">Забыли пароль?</button><button class="btn ghost" data-act="teamSignup">Я директор, аккаунта ещё нет</button></div>');
   }
   function openSignup() {
     D = { kind: "signup" };
-    openSheet('<h2>Аккаунт директора</h2><p class="sub">Нужен, чтобы выдавать доступ сотрудникам и работать с разных устройств. На e-mail придёт письмо, если забудете пароль.</p>' +
+    openSheet('<h2>Аккаунт директора</h2><p class="sub">Нужен, чтобы работать с одними данными на разных устройствах. Если забудете пароль аккаунта, на e-mail придёт письмо для его смены.</p>' +
       '<label class="f"><span>E-mail</span><input class="in" id="l-login" type="email" autocomplete="email" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
       '<label class="f"><span>Пароль (не меньше 6 символов)</span><input class="in" id="l-pass" type="password" autocomplete="new-password"></label>' +
       '<label class="f"><span>Пароль ещё раз</span><input class="in" id="l-pass2" type="password" autocomplete="new-password"></label>' +
@@ -413,42 +445,75 @@ const Team = (() => {
   /* ---------- настройки директора ---------- */
   function settingsBlock() {
     if (!Cloud.configured()) return "";
-    let h = '<div class="sec">Доступ сотрудников и облако</div>';
+    let h = '<div class="sec">Облако: вход с любого устройства</div>';
     const s = Cloud.session();
     if (!s) {
-      return h + '<div class="hint" style="margin-top:0">Директор видит всё, а сотрудник входит по своему логину и видит только свои листки, выплаты, табель и заявления.</div>' +
+      return h + '<div class="hint" style="margin-top:0">Одни и те же данные на телефоне, компьютере и сайте. Данные шифруются на устройстве вашим паролем шифрования, на сервер уходит только шифр.</div>' +
         '<div class="btns"><button class="btn sec2" data-act="teamLogin">Войти</button><button class="btn sec2" data-act="teamSignup">Создать аккаунт</button></div>';
     }
     const c = entry(), who = Cloud.shownLogin(s.email);
     h += '<div class="hint" style="margin-top:0">Вы вошли: <b>' + esc(who) + '</b></div>';
-    if (c && c.cloud) {
-      h += '<div class="note" style="margin-top:0">' + (c.cloud.role === "owner" ? "Вы директор этой компании. " : "Вы бухгалтер этой компании. ") +
+    if (c && c.cloud && c.cloud.needKey) {
+      h += '<div class="alert warn">Чтобы открыть данные компании на этом устройстве, введите пароль шифрования.</div>' +
+        '<div class="stack"><button class="btn" data-act="teamKey">Ввести пароль шифрования</button></div>';
+    } else if (c && c.cloud) {
+      h += '<div class="note" style="margin-top:0">Данные зашифрованы. ' +
         (syncError ? "Не отправлено: " + esc(syncError) : c.cloud.dirty ? "Есть изменения, ещё не отправленные на сервер." : "Все изменения на сервере.") + '</div>' +
-        '<div class="stack"><button class="btn sec2" data-act="teamAccess">Доступы сотрудников</button>' +
-        '<button class="btn sec2" data-act="teamReqs">Заявления' + (newReqs() ? " (новых: " + newReqs() + ")" : "") + '</button>' +
+        '<div class="stack">' + (EMPLOYEES ? '<button class="btn sec2" data-act="teamAccess">Доступы сотрудников</button>' +
+        '<button class="btn sec2" data-act="teamReqs">Заявления' + (newReqs() ? " (новых: " + newReqs() + ")" : "") + '</button>' : "") +
         (isOwner(c) ? '<button class="btn ghost" data-act="teamUnlink">Отключить компанию от облака</button>' : "") + '</div>';
     } else if (S.setup) {
       h += '<div class="stack"><button class="btn sec2" data-act="teamLink">Подключить «' + esc(coLabel({ name: S.company.name })) + '» к облаку</button></div>';
     }
     return h + '<div class="btns"><button class="btn ghost" data-act="teamPass">Сменить пароль</button><button class="btn ghost" data-act="teamOut">Выйти</button></div>';
   }
-  const welcomeBtn = () => Cloud.configured() ? '<button class="btn ghost" data-act="teamLogin">У меня есть логин: войти</button>' : "";
+  const welcomeBtn = () => Cloud.configured() ? '<button class="btn ghost" data-act="teamLogin">Уже есть аккаунт: войти</button>' : "";
   const payBanner = () => { const n = newReqs(); return n ? '<button class="alert warn" style="width:100%;border:0;text-align:left;font:inherit" data-act="teamReqs">Заявления сотрудников, новых: ' + n + '</button>' : ""; };
 
+  const ENC_NOTE = '<div class="alert warn">Пароль шифрования не хранится на сервере и не восстанавливается. Забудете — данные в облаке не открыть (на этом устройстве они останутся). Запишите его.</div>';
+  function openLink() {
+    if (!canEncrypt()) { toast("На этом устройстве шифрование недоступно: обновите браузер или систему"); return; }
+    D = { kind: "link" };
+    openSheet('<h2>Подключить к облаку</h2><p class="sub">Придумайте пароль шифрования. Данные зашифруются на этом устройстве, на сервер (Google) уйдёт только шифр. На других устройствах введёте этот же пароль.</p>' + ENC_NOTE +
+      '<label class="f"><span>Пароль шифрования (не меньше 8 символов)</span><input class="in" id="k-pass" type="password" autocomplete="new-password"></label>' +
+      '<label class="f"><span>Ещё раз</span><input class="in" id="k-pass2" type="password" autocomplete="new-password"></label>' +
+      '<div class="stack"><button class="btn" data-act="teamDoLink">Зашифровать и подключить</button></div>');
+  }
   async function linkCompany() {
-    const c = entry(), s = Cloud.session();
-    if (!confirmBox("Данные компании будут храниться на серверах Google за пределами Узбекистана. По ст. 27¹ закона о персональных данных это допускается при выполнении её условий, отвечает за это компания. Подключить?")) return;
-    const cid = newId(), name = S.company.name || "";
-    await Cloud.commit([W.set("companies/" + cid, { owner: s.uid, name, rev: 0, parts: 0, updated: nowIso(), by: s.uid }, { exists: false })]);
-    await Cloud.commit([W.set("members/" + s.uid + "_" + cid, { uid: s.uid, company: cid, role: "owner", emp: "", name: s.email, login: Cloud.shownLogin(s.email), companyName: name })]);
-    c.cloud = { cid, role: "owner", owner: s.uid, rev: 0, ut: null, parts: 0, dirty: true };
+    const pass = $("#k-pass").value;
+    if (pass.length < 8) { toast("Пароль шифрования: не меньше 8 символов"); return; }
+    if (pass !== $("#k-pass2").value) { toast("Пароли не совпадают"); return; }
+    const c = entry(), s = Cloud.session(), cid = newId(), salt = rand(16), key = await deriveKey(pass, salt), check = await encrypt(key, CHECK);
+    await Cloud.commit([W.set("companies/" + cid, { owner: s.uid, name: "", rev: 0, parts: 0, updated: nowIso(), by: s.uid }, { exists: false })]);
+    await Cloud.commit([W.set("members/" + s.uid + "_" + cid, { uid: s.uid, company: cid, role: "owner", emp: "", name: "", login: "", companyName: "" })]);
+    await saveKey(cid, key);
+    c.cloud = { cid, role: "owner", owner: s.uid, rev: 0, ut: null, parts: 0, dirty: true, salt: b64(salt), kIv: check.iv, kData: check.data };
     lsSet(CO_KEY(c.id), S);
     lastRaw[c.id] = localStorage.getItem(CO_KEY(c.id));
     lsSet(REG_KEY, REG);
     await push(c);
-    memCache[cid] = null;
+    closeSheet(); render();
+    toast("Компания в облаке, данные зашифрованы");
+  }
+  function openKey() {
+    D = { kind: "key" };
+    openSheet('<h2>Пароль шифрования</h2><p class="sub">Тот, что вы придумали при подключении компании к облаку.</p>' +
+      '<label class="f"><span>Пароль шифрования</span><input class="in" id="k-pass" type="password" autocomplete="current-password"></label>' +
+      '<div class="stack"><button class="btn" data-act="teamDoKey">Открыть данные</button></div>');
+  }
+  async function enterKey() {
+    const c = linked();
+    if (!c || !canEncrypt()) return;
+    const key = await deriveKey($("#k-pass").value, unb64(c.cloud.salt));
+    if (await decrypt(key, c.cloud.kIv, c.cloud.kData).catch(() => "") !== CHECK) { toast("Неверный пароль шифрования"); return; }
+    await saveKey(c.cloud.cid, key);
+    delete c.cloud.needKey;
+    c.cloud.rev = 0;           // загрузить данные заново
+    lsSet(REG_KEY, REG);
+    closeSheet();
+    await pull(c);
     render();
-    toast("Компания в облаке. Теперь можно выдавать доступы.");
+    toast("Данные открыты");
   }
   async function unlinkCompany() {
     const c = linked();
@@ -735,7 +800,8 @@ const Team = (() => {
     teamLogin: openLogin, teamSignup: openSignup,
     teamDoLogin: act(doLogin), teamDoSignup: act(doSignup), teamReset: act(doReset),
     teamOut: act(signOutAll), teamPass: openPassword, teamSavePass: act(savePassword),
-    teamLink: act(linkCompany), teamUnlink: act(unlinkCompany),
+    teamLink: openLink, teamDoLink: act(linkCompany), teamUnlink: act(unlinkCompany),
+    teamKey: openKey, teamDoKey: act(enterKey),
     teamAccess: act(openAccess),
     teamEmpAcc: act(t => openEmpAccess(t.dataset.id)),
     teamRenew: act(async t => {
