@@ -34,7 +34,7 @@ if ($VersionCode -gt 0) {
 }
 
 $sha = { param($p) (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant() }
-$skip = { param($n) ($n -like 'dev-*') -or ($n -like '*.apk') -or ($n -eq 'update.json') -or ($n -eq 'update.sig') -or ($n -eq 'sw.js') }
+$skip = { param($n) ($n -like 'dev-*') -or ($n -like '*.apk') -or ($n -like '*.exe') -or ($n -eq 'update.json') -or ($n -eq 'update.sig') -or ($n -eq 'sw.js') }
 $rows = @(Get-ChildItem $web -File | Where-Object { -not (& $skip $_.Name) } | Sort-Object Name | ForEach-Object { '    "{0}": "{1}"' -f $_.Name, (& $sha $_.FullName) })
 $text = "{`n  `"version`": $version,`n  `"minApi`": $MinApi,`n  `"apk`": { `"code`": $apkCode, `"name`": `"$apkName`", `"file`": `"Zarplata.apk`", `"sha256`": `"$(& $sha $apkFile)`" },`n  `"files`": {`n" + ($rows -join ",`n") + "`n  }`n}`n"
 [IO.File]::WriteAllText($manifest, $text, (New-Object Text.UTF8Encoding($false)))

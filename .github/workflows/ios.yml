@@ -27,7 +27,7 @@ jobs:
       - name: Copy the web app into the iOS project
         run: |
           mkdir -p ios/Zarplata/web
-          rsync -a --exclude 'dev-*' --exclude 'sw.js' --exclude '*.apk' --exclude 'update.sig' android/web/ ios/Zarplata/web/
+          rsync -a --exclude 'dev-*' --exclude 'sw.js' --exclude '*.apk' --exclude '*.exe' --exclude 'update.sig' android/web/ ios/Zarplata/web/
           ls ios/Zarplata/web
 
       - name: Generate the Xcode project

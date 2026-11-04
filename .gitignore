@@ -1,5 +1,6 @@
 *.apk
 !android/web/Zarplata.apk
+!android/web/Zarplata.exe
 .shot*
 ios/Zarplata/web/
 ios/*.xcodeproj/
