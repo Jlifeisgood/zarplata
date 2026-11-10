@@ -363,7 +363,7 @@ function applyTheme() {
 /* ---------- приветствие ---------- */
 function welcome() {
   return '<div class="wel"><div style="margin-bottom:22px">' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang") + '</div><div class="logo">' + ICON.wallet + '</div><h1>Зарплата</h1>' +
-    '<p>Считает НДФЛ, ИНПС и ЕСП, показывает сумму «на руки» и готовит отчёты. Данные хранятся только на вашем телефоне.</p>' +
+    '<p>Считает НДФЛ, ИНПС и ЕСП, показывает сумму «на руки» и готовит отчёты. Данные хранятся только на вашем устройстве.</p>' +
     '<label class="f"><span>Название компании</span><input class="in" id="w-name" placeholder="Например, ООО «Ромашка»" autocomplete="off"></label>' +
     '<label class="f"><span>ИНН (по желанию)</span><input class="in" id="w-inn" inputmode="numeric" maxlength="9" placeholder="9 цифр"></label>' +
     sw("swd", "split", D && D.split, "Есть производство", "Разделять сотрудников на АУП и производство") +
@@ -395,7 +395,7 @@ function viewPay() {
   let h = '<div class="top"><h1>Зарплата</h1><div class="sub">' + coChip() + '</div></div><div class="page">';
   h += '<div class="month"><button class="ib" data-act="ym" data-d="-1" aria-label="Предыдущий месяц">' + ICON.left + '</button><div class="m">' + ymLabel(ym) +
     (ym === curYm() ? "<small>текущий месяц</small>" : "") + '</div><button class="ib" data-act="ym" data-d="1" aria-label="Следующий месяц">' + ICON.right + '</button></div>';
-  h += apkBanner() + Team.payBanner() + yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
+  h += apkBanner() + backupNote() + Team.payBanner() + yearNote(ym) + (ym === curYm() && S.emps.length ? deadlineNote() : "");
   if (!S.emps.length) {
     return h + empty(ICON.team, "Пока никого нет", "Добавьте сотрудника — укажите ФИО и начисление, остальное посчитается само.",
       '<button class="btn" data-act="newEmp">' + ICON.plus + 'Добавить сотрудника</button>') + "</div>";
@@ -1252,12 +1252,12 @@ function viewSet() {
     : '<div class="hint">Напоминания о сроках работают в установленном приложении для Android и iPhone. Срок отчёта — до 15 числа (годовой — до 15 февраля), он показан на главном экране.</div>');
   h += '<div class="sec">Язык / Til</div>' + seg("lang", REG.lang || "ru", [["ru", "Русский"], ["uz", "O'zbekcha"]], "lang");
   h += '<div class="sec">Оформление</div>' + seg("theme", REG.theme, [["auto", "Авто"], ["light", "Светлая"], ["dark", "Тёмная"]], "theme");
-  h += '<div class="sec">Данные</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
+  h += '<div class="sec">Данные</div><div class="hint" style="margin-top:0">' + backupInfo() + '</div><div class="stack" style="margin-top:0"><button class="btn sec2" data-act="backup">Сохранить резервную копию</button><button class="btn sec2" data-act="restore">Восстановить из копии</button>' +
     '<button class="btn sec2" data-act="companies">Компании (' + REG.list.length + '): сменить или добавить</button>' +
     '<button class="btn bad" data-act="delCo">Удалить эту компанию</button>' +
     '<button class="btn bad" data-act="wipe">' + (REG.list.length > 1 ? "Стереть все компании и данные" : "Стереть все данные") + '</button></div><input type="file" id="restore-file" accept=".json,application/json" hidden>';
   if (apkBanner()) h += '<div style="height:14px"></div>' + apkBanner();
-  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + (A && A.webVersion ? " · обновление " + A.webVersion() : "") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом телефоне и на сервере (Google Firebase)." : "Данные хранятся только на этом телефоне и никуда не отправляются, через интернет приложение только получает обновления.") + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
+  h += '<div class="note"><b>Зарплата ' + (A && A.appVersion ? A.appVersion() : "dev") + (A && A.webVersion ? " · обновление " + A.webVersion() : "") + '</b><br>' + (Team.linked() ? "Данные компании хранятся на этом устройстве, а в облаке — только в зашифрованном виде." : "Данные хранятся только на этом устройстве и никуда не отправляются, через интернет приложение только получает обновления.") + ' Делайте резервную копию — при очистке данных приложения записи пропадут. Расчёты справочные: сверяйте ставки с Налоговым кодексом.</div></div>';
   return h;
 }
 function openRates() {
@@ -1291,6 +1291,8 @@ function saveRates() {
 
 /* ---------- файлы ---------- */
 const toB64 = s => btoa(unescape(encodeURIComponent(s)));
+/* На компьютере файл скачивается в «Загрузки», а текст копируется; окно «Поделиться» — только на телефоне и планшете (iPad представляется как Mac) */
+const MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform || ""));
 function sendFile(name, mime, b64, noShare) {
   if (A && A.saveFile) {
     const r = String(A.saveFile(name, mime, b64));
@@ -1303,19 +1305,20 @@ function sendFile(name, mime, b64, noShare) {
     const blob = new Blob([u8], { type: mime });
     let file = null;
     try { file = new File([blob], name, { type: mime }); } catch (e) { }
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    if (MOBILE && file && navigator.canShare && navigator.canShare({ files: [file] })) {
       navigator.share({ files: [file], title: name }).catch(err => { if (!err || err.name !== "AbortError") toast("Не удалось сохранить файл"); });
       return;
     }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    if (!MOBILE) toast("Файл сохранён в папку загрузок: " + name);
   }
 }
 function shareText(title, text) {
   title = I18N.tr(title); text = I18N.tr(text);
   if (A && A.shareText) A.shareText(title, text);
-  else if (navigator.share) navigator.share({ title, text }).catch(() => { });
+  else if (MOBILE && navigator.share) navigator.share({ title, text }).catch(() => { });
   else if (navigator.clipboard) { navigator.clipboard.writeText(text); toast("Скопировано"); }
 }
 /* Установка на iPhone/iPad как приложение (PWA): офлайн-кэш работает только по https, внутри Android-приложения не нужен */
@@ -1327,7 +1330,18 @@ function backup() {
   REG.list.forEach(c => { companies[c.id] = c.id === REG.active ? S : lsGet(CO_KEY(c.id)); });
   sendFile("zarplata-backup-" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + ".json", "application/json",
     toB64(JSON.stringify({ v: 2, reg: REG, companies })), false);
+  REG.backupAt = Date.now(); lsSet(REG_KEY, REG); render();
 }
+/* Напоминание о резервной копии: данные только на этом устройстве, а копии не было 30 дней. С облаком не показывается. */
+function backupNote() {
+  if (!REG.firstAt) { REG.firstAt = Date.now(); lsSet(REG_KEY, REG); }
+  if (!S.emps.length || Team.linked()) return "";
+  const days = Math.floor((Date.now() - (REG.backupAt || REG.firstAt)) / 86400000);
+  if (days < 30) return "";
+  return '<button class="alert warn" style="width:100%;border:0;text-align:left;font:inherit" data-act="backup">' + (REG.backupAt ? "Резервной копии не было " + days + " дн." : "Резервная копия ещё не делалась.") +
+    ' Данные хранятся только на этом устройстве. Нажмите, чтобы сохранить копию.</button>';
+}
+const backupInfo = () => { const d = REG.backupAt ? new Date(REG.backupAt) : null; return d ? "Последняя резервная копия: " + pad(d.getDate()) + "." + pad(d.getMonth() + 1) + "." + d.getFullYear() : "Резервная копия ещё не делалась"; };
 function restoreFrom(file) {
   const rd = new FileReader();
   rd.onload = () => {
@@ -1541,6 +1555,7 @@ const ACT = {
     if (!confirmBox("Точно стереть всё? Сначала можно сохранить резервную копию.")) return;
     Team.forgetOnWipe();
     REG.list.forEach(c => { try { localStorage.removeItem(CO_KEY(c.id)); } catch (e) { } });
+    try { Object.keys(localStorage).filter(k => /^zarplata\.(key|pub)\./.test(k)).forEach(k => localStorage.removeItem(k)); } catch (e) { }
     const id = uid(), theme = REG.theme;
     REG = { v: 1, active: id, list: [{ id, name: "" }], theme };
     S = blank(); save(); D = { split: false }; ui.tab = "pay"; ui.filter = "all"; render();
@@ -1592,7 +1607,17 @@ document.addEventListener("change", ev => {
   if (el.id === "restore-file" && el.files[0]) { restoreFrom(el.files[0]); el.value = ""; }
   else if (el.id === "c-itfrom" || el.id === "c-itto") { applyItDate(el); if (el.value.trim() && !parseDmy(el.value)) toast("Дата в формате дд.мм.гггг"); }
 });
-document.addEventListener("keydown", ev => { if (ev.key === "Escape" && sheetOpen()) closeSheet(); });
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && sheetOpen()) { closeSheet(); return; }
+  // Enter в поле ввода — как нажатие главной кнопки формы (удобно с клавиатуры компьютера)
+  if (ev.key !== "Enter" || ev.target.nodeName !== "INPUT" || ev.target.type === "file") return;
+  const box = sheetOpen() ? $("#sheet") : $("#app");
+  if (!box.contains(ev.target)) return;
+  const btn = [...box.querySelectorAll(".stack > .btn, .btns > .btn")].find(b => !/\b(ghost|sec2|bad)\b/.test(b.className));
+  if (btn) { ev.preventDefault(); ev.target.blur(); btn.click(); }
+});
+/* тема «Авто»: при смене оформления системы обновляем цвет системных панелей */
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme()); } catch (e) { }
 
 D = { split: false };
 render();

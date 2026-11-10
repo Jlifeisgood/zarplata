@@ -78,7 +78,7 @@ const Team = (() => {
     if (flushing) { again = true; return; }
     flushing = true;
     try {
-      for (const c of REG.list.filter(x => x.cloud && x.cloud.dirty)) await push(c);
+      for (const c of REG.list.filter(x => x.cloud && x.cloud.dirty && !x.cloud.needKey)) await push(c);   // без пароля шифрования не отправляем и не шумим ошибками
       const a = linked();
       if (a && EMPLOYEES) await publish(a);
       syncError = ""; syncedAt = Date.now();
@@ -191,7 +191,7 @@ const Team = (() => {
     if (c.cloud.role === "owner") {
       delete c.cloud;
       lsSet(REG_KEY, REG);
-      toast("Компания «" + coLabel(c) + "» больше не в облаке, данные остались на телефоне");
+      toast("Компания «" + coLabel(c) + "» больше не в облаке, данные остались на устройстве");
     } else removeLocal(c);
   }
   function removeLocal(c) {
@@ -417,7 +417,7 @@ const Team = (() => {
   }
   async function doReset() {
     const login = $("#l-login").value.trim();
-    if (!login.includes("@")) { toast("Сотруднику новый доступ выдаёт директор. Директор: введите e-mail."); return; }
+    if (!login.includes("@")) { toast("Введите e-mail аккаунта в поле выше"); return; }
     await Cloud.resetEmail(login);
     toast("Письмо для смены пароля отправлено на " + login);
   }
@@ -467,7 +467,9 @@ const Team = (() => {
     }
     return h + '<div class="btns"><button class="btn ghost" data-act="teamPass">Сменить пароль</button><button class="btn ghost" data-act="teamOut">Выйти</button></div>';
   }
-  const welcomeBtn = () => Cloud.configured() ? '<button class="btn ghost" data-act="teamLogin">Уже есть аккаунт: войти</button>' : "";
+  const welcomeBtn = () => !Cloud.configured() ? "" : Cloud.session() && linked() && linked().cloud.needKey
+    ? '<button class="btn sec2" data-act="teamKey">Ввести пароль шифрования</button><button class="btn ghost" data-act="teamOut">Выйти из аккаунта</button>'
+    : Cloud.session() ? "" : '<button class="btn ghost" data-act="teamLogin">Уже есть аккаунт: войти</button>';
   const payBanner = () => { const n = newReqs(); return n ? '<button class="alert warn" style="width:100%;border:0;text-align:left;font:inherit" data-act="teamReqs">Заявления сотрудников, новых: ' + n + '</button>' : ""; };
 
   const ENC_NOTE = '<div class="alert warn">Пароль шифрования не хранится на сервере и не восстанавливается. Забудете — данные в облаке не открыть (на этом устройстве они останутся). Запишите его.</div>';
@@ -518,7 +520,7 @@ const Team = (() => {
   async function unlinkCompany() {
     const c = linked();
     if (!c || !isOwner(c)) return;
-    if (!confirmBox("Отключить компанию от облака? Данные на сервере удалятся, доступы сотрудников перестанут работать. На этом телефоне всё останется.")) return;
+    if (!confirmBox("Отключить компанию от облака? Данные на сервере удалятся. На этом устройстве всё останется.")) return;
     const cid = c.cloud.cid, inBatches = async list => { for (let i = 0; i < list.length; i += 10) await Cloud.commit(list.slice(i, i + 10)); };
     const members = await Cloud.query("members", "company", cid);
     await inBatches((await Cloud.query("requests", "company", cid)).map(d => W.del("requests/" + d.id)));
@@ -528,7 +530,7 @@ const Team = (() => {
     await Cloud.commit([W.del("companies/" + cid)]);
     await Cloud.commit(members.filter(d => d.data.role === "owner").map(d => W.del("members/" + d.id)));
     delete c.cloud;
-    wr(PUB(cid), null);
+    wr(PUB(cid), null); wr(KEY(cid), null);
     lsSet(REG_KEY, REG);
     render();
     toast("Компания отключена от облака");

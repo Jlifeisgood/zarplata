@@ -180,7 +180,7 @@ final class WebViewController: UIViewController, WKScriptMessageHandler, WKNavig
         let js: String
         if args.contains("-smoke-info") {
             js = """
-            window.Android.saveFile("smoke-info.txt", "text/plain", btoa(unescape(encodeURIComponent(JSON.stringify({ path: location.pathname.slice(-40), ver: window.Android.webVersion(), emps: window.__dbg.S().emps.length, marker: localStorage.getItem("zarplata.session") })))));
+            window.Android.saveFile("smoke-info.txt", "text/plain", btoa(unescape(encodeURIComponent(JSON.stringify({ subtle: !!(window.crypto && crypto.subtle), secure: window.isSecureContext, path: location.pathname.slice(-40), ver: window.Android.webVersion(), emps: window.__dbg.S().emps.length, marker: localStorage.getItem("zarplata.session") })))));
             """
         } else if args.contains("-smoke-demo") {
             // заодно проверяем, что из приложения доступен настоящий сервер входа Firebase: ключ заведомо неверный, ждём ответ 400
